@@ -9,7 +9,9 @@ export type BaseResponseWithData<
   RecordKey extends string = 'data',
 > = RecordKey extends keyof BaseResponse
   ? never
-  : BaseResponse & { success: true } & Record<RecordKey, T>;
+  : BaseResponse & {
+    success: true
+} & Record<RecordKey, T>;
 
 export type ApiErrorResponse<TDetails = unknown> = BaseResponse & {
   success: false;
