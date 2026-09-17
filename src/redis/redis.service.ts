@@ -65,6 +65,11 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /** Shared ioredis client for infrastructure that needs atomic Redis operations. */
+  getClient(): Redis {
+    return this.client;
+  }
+
   async onModuleDestroy(): Promise<void> {
     try {
       if (this.client.status !== "end") {

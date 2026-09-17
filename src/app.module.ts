@@ -14,6 +14,9 @@ import { validateEnvironment } from "@/config/env.validation.js";
 import { buildLoggerModuleOptions } from "@/config/logger.config.js";
 import { DatabaseModule } from "@/database/database.module.js";
 import { HealthModule } from "@/modules/health/health.module.js";
+import { AuthModule } from "@/modules/auth/auth.module.js";
+import { EmailModule } from "@/modules/email/email.module.js";
+import { OrganizationsModule } from "@/modules/organizations/organizations.module.js";
 import { QueueModule } from "@/queue/queue.module.js";
 import { RedisModule } from "@/redis/redis.module.js";
 
@@ -33,16 +36,62 @@ import { RedisModule } from "@/redis/redis.module.js";
     ThrottlerModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => [
-        {
-          ttl: config.getOrThrow<number>("app.throttleTtlMs"),
-          limit: config.getOrThrow<number>("app.throttleLimit"),
-        },
-      ],
+      useFactory: (config: ConfigService) => ({
+        throttlers: [
+          {
+            name: "default",
+            ttl: config.getOrThrow<number>("app.throttleTtlMs"),
+            limit: config.getOrThrow<number>("app.throttleLimit"),
+          },
+          {
+            name: "login",
+            ttl: 60_000,
+            limit: config.getOrThrow<number>("app.throttleLoginLimit"),
+          },
+          {
+            name: "register",
+            ttl: 60_000,
+            limit: config.getOrThrow<number>("app.throttleRegisterLimit"),
+          },
+          {
+            name: "forgot",
+            ttl: 60_000,
+            limit: config.getOrThrow<number>("app.throttleForgotLimit"),
+          },
+          {
+            name: "resend",
+            ttl: 60_000,
+            limit: config.getOrThrow<number>("app.throttleResendLimit"),
+          },
+          {
+            name: "reset",
+            ttl: 60_000,
+            limit: config.getOrThrow<number>("app.throttleResetLimit"),
+          },
+          {
+            name: "invite",
+            ttl: 60_000,
+            limit: config.getOrThrow<number>("app.throttleInviteLimit"),
+          },
+          {
+            name: "google",
+            ttl: 60_000,
+            limit: config.getOrThrow<number>("app.throttleGoogleLimit"),
+          },
+          {
+            name: "refresh",
+            ttl: 60_000,
+            limit: config.getOrThrow<number>("app.throttleRefreshLimit"),
+          },
+        ],
+      }),
     }),
     DatabaseModule,
     RedisModule,
     QueueModule,
+    EmailModule,
+    AuthModule,
+    OrganizationsModule,
     HealthModule,
   ],
   providers: [

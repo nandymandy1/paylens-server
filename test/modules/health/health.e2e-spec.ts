@@ -52,13 +52,12 @@ describe("Health endpoints (e2e)", () => {
     });
   });
 
-  it("stays ready when Redis is unavailable while reporting it degraded", async () => {
+  it("reports not-ready when Redis is unavailable: sessions are Redis-backed", async () => {
     await request(app.getHttpServer())
       .get("/ready")
-      .expect(200)
+      .expect(503)
       .expect(({ body }) => {
-        expect(body.data.ready).toBe(true);
-        expect(body.data.dependencies).toEqual({ database: true, redis: false });
+        expect(body.code).toBe("SERVICE_UNAVAILABLE");
       });
 
     await request(app.getHttpServer()).get("/api/docs").expect(200);

@@ -20,9 +20,9 @@ describe("HealthService", () => {
     });
   });
 
-  it("stays ready when Redis is down while reporting it degraded", async () => {
+  it("is not ready when Redis is down: sessions are Redis-backed", async () => {
     await expect(createService(true, false).ready()).resolves.toEqual({
-      ready: true,
+      ready: false,
       dependencies: { database: true, redis: false },
     });
   });

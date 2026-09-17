@@ -42,4 +42,51 @@ describe("validateEnvironment", () => {
       "CORS_ORIGINS",
     );
   });
+
+  it("supplies safe auth defaults in test while requiring a strong secret otherwise", () => {
+    const parsed = validateEnvironment(valid);
+
+    expect(parsed.AUTH_ACCESS_TTL_SECONDS).toBe(900);
+    expect(parsed.AUTH_REFRESH_TTL_SECONDS).toBe(1_209_600);
+    expect(parsed.AUTH_COOKIE_SAME_SITE).toBe("lax");
+    expect(parsed.FRONTEND_URL).toBe("http://localhost:3000");
+    expect(parsed.GOOGLE_CLIENT_ID).toBe("");
+
+    expect(() => validateEnvironment({ ...valid, NODE_ENV: "production" })).toThrow(
+      "AUTH_ACCESS_TOKEN_SECRET",
+    );
+    expect(() =>
+      validateEnvironment({ ...valid, NODE_ENV: "production", AUTH_ACCESS_TOKEN_SECRET: "short" }),
+    ).toThrow("AUTH_ACCESS_TOKEN_SECRET");
+  });
+
+  it("treats Google OIDC as an all-or-nothing group", () => {
+    expect(() => validateEnvironment({ ...valid, GOOGLE_CLIENT_ID: "id" })).toThrow(
+      "all-or-nothing",
+    );
+
+    const parsed = validateEnvironment({
+      ...valid,
+      GOOGLE_CLIENT_ID: "id",
+      GOOGLE_CLIENT_SECRET: "secret",
+      GOOGLE_CALLBACK_URL: "http://localhost:4000/api/v1/auth/google/callback",
+    });
+
+    expect(parsed.GOOGLE_CLIENT_ID).toBe("id");
+  });
+
+  it("treats SMTP credentials as an all-or-nothing group", () => {
+    expect(() => validateEnvironment({ ...valid, SMTP_HOST: "smtp.example" })).toThrow(
+      "all-or-nothing",
+    );
+
+    const parsed = validateEnvironment({
+      ...valid,
+      SMTP_HOST: "smtp.example",
+      SMTP_USER: "user",
+      SMTP_PASSWORD: "password",
+    });
+
+    expect(parsed.SMTP_HOST).toBe("smtp.example");
+  });
 });

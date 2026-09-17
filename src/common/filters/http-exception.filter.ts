@@ -39,12 +39,27 @@ export class HttpExceptionFilter extends BaseExceptionFilter {
     const httpException = exception instanceof HttpException ? exception : undefined;
     const status = httpException?.getStatus() ?? HttpStatus.INTERNAL_SERVER_ERROR;
     const validationException = exception instanceof ValidationException ? exception : undefined;
+    const domainCode =
+      httpException && typeof httpException.getResponse() === "object"
+        ? (httpException.getResponse() as { code?: unknown }).code
+        : undefined;
+    const code = validationException
+      ? "VALIDATION_FAILED"
+      : typeof domainCode === "string" && domainCode
+        ? domainCode
+        : (codes[status] ?? "INTERNAL_SERVER_ERROR");
+    const domainMessage =
+      httpException && typeof httpException.getResponse() === "object"
+        ? (httpException.getResponse() as { message?: unknown }).message
+        : undefined;
     const body: ApiErrorResponse<ValidationDetails> = {
       success: false,
-      code: validationException ? "VALIDATION_FAILED" : (codes[status] ?? "INTERNAL_SERVER_ERROR"),
+      code,
       message: validationException
         ? "Request validation failed."
-        : (messages[status] ?? "An unexpected error occurred."),
+        : typeof domainCode === "string" && domainCode && typeof domainMessage === "string"
+          ? domainMessage
+          : (messages[status] ?? "An unexpected error occurred."),
       requestId: request.requestId,
     };
 

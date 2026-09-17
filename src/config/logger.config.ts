@@ -5,7 +5,7 @@ import type { Params } from "nestjs-pino";
 // PayLens tracing (ExecutionTraceService) owns request received/completed/failed
 // events, so pino-http automatic logging stays off and the request-scoped logger
 // never carries the raw req object. Redaction remains as defense-in-depth.
-export function buildLoggerModuleOptions(config: ConfigService): Params {
+export const buildLoggerModuleOptions = (config: ConfigService): Params => {
   const environment = config.getOrThrow<string>("app.environment");
 
   return {
@@ -28,6 +28,13 @@ export function buildLoggerModuleOptions(config: ConfigService): Params {
           "req.body.refreshToken",
           "req.body.invitationToken",
           "req.body.resetToken",
+          "req.body.token",
+          "req.body.code",
+          "req.body.secret",
+          "req.query.code",
+          "req.query.state",
+          "req.query.token",
+          "res.headers.set-cookie",
         ],
         censor: "[REDACTED]",
       },
@@ -48,4 +55,4 @@ export function buildLoggerModuleOptions(config: ConfigService): Params {
         : {}),
     },
   };
-}
+};

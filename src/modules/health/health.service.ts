@@ -20,6 +20,7 @@ export class HealthService {
   async ready() {
     const [database, redis] = await Promise.all([this.prisma.isReady(), this.redis.isReady()]);
 
-    return { ready: database, dependencies: { database, redis } };
+    // Sessions are Redis-backed: without Redis the authenticated application cannot serve.
+    return { ready: database && redis, dependencies: { database, redis } };
   }
 }

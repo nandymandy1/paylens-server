@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 export type Environment = "development" | "test" | "production";
 
 export type ValidatedEnvironment = {
@@ -10,13 +12,37 @@ export type ValidatedEnvironment = {
   EXECUTION_TRACE_ENABLED: boolean;
   THROTTLE_TTL_MS: number;
   THROTTLE_LIMIT: number;
+  THROTTLE_LOGIN_LIMIT: number;
+  THROTTLE_REGISTER_LIMIT: number;
+  THROTTLE_FORGOT_LIMIT: number;
+  THROTTLE_RESEND_LIMIT: number;
+  THROTTLE_RESET_LIMIT: number;
+  THROTTLE_INVITE_LIMIT: number;
+  THROTTLE_GOOGLE_LIMIT: number;
+  THROTTLE_REFRESH_LIMIT: number;
+  FRONTEND_URL: string;
+  AUTH_ACCESS_TOKEN_SECRET: string;
+  AUTH_ACCESS_TTL_SECONDS: number;
+  AUTH_REFRESH_TTL_SECONDS: number;
+  AUTH_COOKIE_SECURE: boolean;
+  AUTH_COOKIE_SAME_SITE: "strict" | "lax" | "none";
+  AUTH_COOKIE_DOMAIN: string;
+  SMTP_HOST: string;
+  SMTP_PORT: number;
+  SMTP_SECURE: boolean;
+  SMTP_USER: string;
+  SMTP_PASSWORD: string;
+  EMAIL_FROM: string;
+  GOOGLE_CLIENT_ID: string;
+  GOOGLE_CLIENT_SECRET: string;
+  GOOGLE_CALLBACK_URL: string;
 };
 
 const environments = new Set<Environment>(["development", "test", "production"]);
 
 const logLevels = new Set<ValidatedEnvironment["LOG_LEVEL"]>(["debug", "info", "warn", "error"]);
 
-function validateNodeEnvironment(value: unknown): Environment {
+const validateNodeEnvironment = (value: unknown): Environment => {
   const environment = value ?? "development";
 
   if (typeof environment !== "string" || !environments.has(environment as Environment)) {
@@ -24,15 +50,15 @@ function validateNodeEnvironment(value: unknown): Environment {
   }
 
   return environment as Environment;
-}
+};
 
-function validateInteger(
+const validateInteger = (
   value: unknown,
   defaultValue: number,
   name: string,
   minimum: number,
   maximum: number,
-): number {
+): number => {
   const numberValue = Number(value ?? defaultValue);
 
   if (!Number.isInteger(numberValue) || numberValue < minimum || numberValue > maximum) {
@@ -40,13 +66,13 @@ function validateInteger(
   }
 
   return numberValue;
-}
+};
 
-function validatePort(value: unknown): number {
+const validatePort = (value: unknown): number => {
   return validateInteger(value, 4000, "PORT", 1, 65_535);
-}
+};
 
-function validateLogLevel(value: unknown): ValidatedEnvironment["LOG_LEVEL"] {
+const validateLogLevel = (value: unknown): ValidatedEnvironment["LOG_LEVEL"] => {
   const level = value ?? "info";
 
   if (typeof level !== "string" || !logLevels.has(level as ValidatedEnvironment["LOG_LEVEL"])) {
@@ -54,9 +80,9 @@ function validateLogLevel(value: unknown): ValidatedEnvironment["LOG_LEVEL"] {
   }
 
   return level as ValidatedEnvironment["LOG_LEVEL"];
-}
+};
 
-function validateBoolean(value: unknown, defaultValue: boolean, name: string): boolean {
+const validateBoolean = (value: unknown, defaultValue: boolean, name: string): boolean => {
   if (value === undefined || value === "") {
     return defaultValue;
   }
@@ -70,9 +96,9 @@ function validateBoolean(value: unknown, defaultValue: boolean, name: string): b
   }
 
   throw new Error(`${name} must be true or false`);
-}
+};
 
-function requireUrl(value: unknown, name: string, allowedProtocols: readonly string[]): string {
+const requireUrl = (value: unknown, name: string, allowedProtocols: readonly string[]): string => {
   if (typeof value !== "string" || !value.trim()) {
     throw new Error(`${name} is required`);
   }
@@ -90,9 +116,9 @@ function requireUrl(value: unknown, name: string, allowedProtocols: readonly str
   }
 
   return value;
-}
+};
 
-function validateCorsOrigins(value: unknown): string {
+const validateCorsOrigins = (value: unknown): string => {
   if (typeof value !== "string" || !value.trim()) {
     throw new Error("CORS_ORIGINS must be a comma-separated origin allowlist");
   }
@@ -117,7 +143,87 @@ function validateCorsOrigins(value: unknown): string {
   }
 
   return value;
-}
+};
+
+const validateOptionalUrl = (
+  value: unknown,
+  name: string,
+  defaultValue: string,
+  allowedProtocols: readonly string[],
+): string => {
+  if (value === undefined || value === "") {
+    return defaultValue;
+  }
+
+  return requireUrl(value, name, allowedProtocols);
+};
+
+const validateAuthSecret = (value: unknown, nodeEnv: Environment): string => {
+  if (value === undefined || value === "") {
+    if (nodeEnv === "test") {
+      // Ephemeral process-local secret: test sessions never leave the process.
+      return `test-only-ephemeral-${randomUUID()}`;
+    }
+
+    throw new Error("AUTH_ACCESS_TOKEN_SECRET is required (minimum 32 characters)");
+  }
+
+  if (typeof value !== "string" || value.length < 32) {
+    throw new Error("AUTH_ACCESS_TOKEN_SECRET must be at least 32 characters");
+  }
+
+  return value;
+};
+
+const validateSameSite = (value: unknown): ValidatedEnvironment["AUTH_COOKIE_SAME_SITE"] => {
+  if (value === undefined || value === "") {
+    return "lax";
+  }
+
+  if (value === "strict" || value === "lax" || value === "none") {
+    return value;
+  }
+
+  throw new Error("AUTH_COOKIE_SAME_SITE must be strict, lax, or none");
+};
+
+const validateGoogleGroup = (
+  raw: Record<string, unknown>,
+): { clientId: string; clientSecret: string; callbackUrl: string } => {
+  const clientId = raw.GOOGLE_CLIENT_ID === undefined ? "" : String(raw.GOOGLE_CLIENT_ID);
+  const clientSecret =
+    raw.GOOGLE_CLIENT_SECRET === undefined ? "" : String(raw.GOOGLE_CLIENT_SECRET);
+  const callbackUrl = raw.GOOGLE_CALLBACK_URL === undefined ? "" : String(raw.GOOGLE_CALLBACK_URL);
+  const present = [clientId, clientSecret, callbackUrl].filter((part) => part !== "").length;
+
+  if (present > 0 && present < 3) {
+    throw new Error(
+      "Google OIDC is all-or-nothing: set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_CALLBACK_URL together, or none",
+    );
+  }
+
+  if (present === 3) {
+    requireUrl(callbackUrl, "GOOGLE_CALLBACK_URL", ["http:", "https:"]);
+  }
+
+  return { clientId, clientSecret, callbackUrl };
+};
+
+const validateSmtpGroup = (parts: {
+  smtpHost: string;
+  smtpUser: string;
+  smtpPassword: string;
+}): void => {
+  const present = [parts.smtpHost, parts.smtpUser, parts.smtpPassword].filter(
+    (part) => part !== "",
+  ).length;
+
+  if (present > 0 && present < 3) {
+    throw new Error(
+      "SMTP is all-or-nothing: set SMTP_HOST, SMTP_USER, and SMTP_PASSWORD together, or none (development/test fallback keeps mail in memory)",
+    );
+  }
+};
 
 export const validateEnvironment = (raw: Record<string, unknown>): ValidatedEnvironment => {
   const nodeEnv = validateNodeEnvironment(raw.NODE_ENV);
@@ -133,16 +239,139 @@ export const validateEnvironment = (raw: Record<string, unknown>): ValidatedEnvi
   );
   const throttleTtl = validateInteger(raw.THROTTLE_TTL_MS, 60_000, "THROTTLE_TTL_MS", 1, 3_600_000);
   const throttleLimit = validateInteger(raw.THROTTLE_LIMIT, 100, "THROTTLE_LIMIT", 1, 10_000);
+  const throttleLoginLimit = validateInteger(
+    raw.THROTTLE_LOGIN_LIMIT,
+    10,
+    "THROTTLE_LOGIN_LIMIT",
+    1,
+    10_000,
+  );
+  const throttleRegisterLimit = validateInteger(
+    raw.THROTTLE_REGISTER_LIMIT,
+    5,
+    "THROTTLE_REGISTER_LIMIT",
+    1,
+    10_000,
+  );
+  const throttleForgotLimit = validateInteger(
+    raw.THROTTLE_FORGOT_LIMIT,
+    5,
+    "THROTTLE_FORGOT_LIMIT",
+    1,
+    10_000,
+  );
+  const throttleResendLimit = validateInteger(
+    raw.THROTTLE_RESEND_LIMIT,
+    5,
+    "THROTTLE_RESEND_LIMIT",
+    1,
+    10_000,
+  );
+  const throttleResetLimit = validateInteger(
+    raw.THROTTLE_RESET_LIMIT,
+    10,
+    "THROTTLE_RESET_LIMIT",
+    1,
+    10_000,
+  );
+  const throttleInviteLimit = validateInteger(
+    raw.THROTTLE_INVITE_LIMIT,
+    10,
+    "THROTTLE_INVITE_LIMIT",
+    1,
+    10_000,
+  );
+  const throttleGoogleLimit = validateInteger(
+    raw.THROTTLE_GOOGLE_LIMIT,
+    20,
+    "THROTTLE_GOOGLE_LIMIT",
+    1,
+    10_000,
+  );
+  const throttleRefreshLimit = validateInteger(
+    raw.THROTTLE_REFRESH_LIMIT,
+    30,
+    "THROTTLE_REFRESH_LIMIT",
+    1,
+    10_000,
+  );
+  const frontendUrl = validateOptionalUrl(
+    raw.FRONTEND_URL,
+    "FRONTEND_URL",
+    "http://localhost:3000",
+    ["http:", "https:"],
+  );
+  const authAccessTokenSecret = validateAuthSecret(raw.AUTH_ACCESS_TOKEN_SECRET, nodeEnv);
+  const authAccessTtl = validateInteger(
+    raw.AUTH_ACCESS_TTL_SECONDS,
+    900,
+    "AUTH_ACCESS_TTL_SECONDS",
+    60,
+    3_600,
+  );
+  const authRefreshTtl = validateInteger(
+    raw.AUTH_REFRESH_TTL_SECONDS,
+    1_209_600,
+    "AUTH_REFRESH_TTL_SECONDS",
+    3_600,
+    2_592_000,
+  );
+  const authCookieSecure = validateBoolean(
+    raw.AUTH_COOKIE_SECURE,
+    nodeEnv === "production",
+    "AUTH_COOKIE_SECURE",
+  );
+  const authCookieSameSite = validateSameSite(raw.AUTH_COOKIE_SAME_SITE);
+  const authCookieDomain =
+    raw.AUTH_COOKIE_DOMAIN === undefined || raw.AUTH_COOKIE_DOMAIN === ""
+      ? ""
+      : String(raw.AUTH_COOKIE_DOMAIN);
+  const smtpHost = raw.SMTP_HOST === undefined ? "" : String(raw.SMTP_HOST);
+  const smtpPort = validateInteger(raw.SMTP_PORT, 587, "SMTP_PORT", 1, 65_535);
+  const smtpSecure = validateBoolean(raw.SMTP_SECURE, false, "SMTP_SECURE");
+  const smtpUser = raw.SMTP_USER === undefined ? "" : String(raw.SMTP_USER);
+  const smtpPassword = raw.SMTP_PASSWORD === undefined ? "" : String(raw.SMTP_PASSWORD);
+  const emailFrom =
+    raw.EMAIL_FROM === undefined || raw.EMAIL_FROM === ""
+      ? "PayLens <noreply@paylens.local>"
+      : String(raw.EMAIL_FROM);
+  const google = validateGoogleGroup(raw);
+
+  validateSmtpGroup({ smtpHost, smtpUser, smtpPassword });
 
   return {
-    NODE_ENV: nodeEnv,
     PORT: port,
-    DATABASE_URL: databaseUrl,
+    NODE_ENV: nodeEnv,
     REDIS_URL: redisUrl,
-    CORS_ORIGINS: corsOrigins,
     LOG_LEVEL: logLevel,
-    EXECUTION_TRACE_ENABLED: executionTraceEnabled,
+    CORS_ORIGINS: corsOrigins,
+    DATABASE_URL: databaseUrl,
     THROTTLE_TTL_MS: throttleTtl,
     THROTTLE_LIMIT: throttleLimit,
+    THROTTLE_LOGIN_LIMIT: throttleLoginLimit,
+    THROTTLE_REGISTER_LIMIT: throttleRegisterLimit,
+    THROTTLE_FORGOT_LIMIT: throttleForgotLimit,
+    THROTTLE_RESEND_LIMIT: throttleResendLimit,
+    THROTTLE_RESET_LIMIT: throttleResetLimit,
+    THROTTLE_INVITE_LIMIT: throttleInviteLimit,
+    THROTTLE_GOOGLE_LIMIT: throttleGoogleLimit,
+    THROTTLE_REFRESH_LIMIT: throttleRefreshLimit,
+    EXECUTION_TRACE_ENABLED: executionTraceEnabled,
+    FRONTEND_URL: frontendUrl,
+    AUTH_ACCESS_TOKEN_SECRET: authAccessTokenSecret,
+    AUTH_ACCESS_TTL_SECONDS: authAccessTtl,
+    AUTH_REFRESH_TTL_SECONDS: authRefreshTtl,
+    AUTH_COOKIE_SECURE: authCookieSecure,
+    AUTH_COOKIE_SAME_SITE: authCookieSameSite,
+    AUTH_COOKIE_DOMAIN: authCookieDomain,
+    SMTP_HOST: smtpHost,
+    SMTP_PORT: smtpPort,
+    SMTP_SECURE: smtpSecure,
+    SMTP_USER: smtpUser,
+    SMTP_PASSWORD: smtpPassword,
+    EMAIL_FROM: emailFrom,
+    GOOGLE_CLIENT_ID: google.clientId,
+    GOOGLE_CLIENT_SECRET: google.clientSecret,
+    GOOGLE_CALLBACK_URL: google.callbackUrl,
   };
 };
