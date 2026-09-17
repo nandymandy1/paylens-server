@@ -20,6 +20,6 @@ export class HealthService {
   async ready() {
     const [database, redis] = await Promise.all([this.prisma.isReady(), this.redis.isReady()]);
 
-    return { ready: database && redis, dependencies: { database, redis } };
+    return { ready: database, dependencies: { database, redis } };
   }
 }

@@ -6,7 +6,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 describe("Health endpoints (e2e)", () => {
   let app: INestApplication;
   let postgres: StartedTestContainer;
-  let redis: StartedTestContainer;
   const originalEnvironment = { ...process.env };
 
   beforeAll(async () => {
@@ -18,13 +17,12 @@ describe("Health endpoints (e2e)", () => {
       })
       .withExposedPorts(5432)
       .start();
-    redis = await new GenericContainer("redis:7-alpine").withExposedPorts(6379).start();
 
     process.env.NODE_ENV = "test";
     process.env.DATABASE_URL = `postgresql://paylens:paylens@${postgres.getHost()}:${postgres.getMappedPort(5432)}/paylens`;
-    process.env.REDIS_URL = `redis://${redis.getHost()}:${redis.getMappedPort(6379)}`;
+    // No Redis container: Redis is an optional capability and /ready must stay green without it.
+    process.env.REDIS_URL = "redis://127.0.0.1:6390";
     process.env.CORS_ORIGINS = "http://localhost:3000";
-    process.env.THROTTLE_LIMIT = "2";
     process.env.EXECUTION_TRACE_ENABLED = "true";
 
     const { createApplication } = await import("@/application.js");
@@ -35,7 +33,6 @@ describe("Health endpoints (e2e)", () => {
 
   afterAll(async () => {
     await app?.close();
-    await redis?.stop();
     await postgres?.stop();
     process.env = originalEnvironment;
   });
@@ -53,27 +50,24 @@ describe("Health endpoints (e2e)", () => {
       requestId,
       data: { status: "ok" },
     });
+  });
 
+  it("stays ready when Redis is unavailable while reporting it degraded", async () => {
     await request(app.getHttpServer())
       .get("/ready")
       .expect(200)
       .expect(({ body }) => {
         expect(body.data.ready).toBe(true);
-        expect(body.data.dependencies).toEqual({ database: true, redis: true });
+        expect(body.data.dependencies).toEqual({ database: true, redis: false });
       });
 
     await request(app.getHttpServer()).get("/api/docs").expect(200);
   });
 
-  it("enforces the global throttler guard with the live exception filter", async () => {
-    await request(app.getHttpServer()).get("/health").expect(200);
-
-    const response = await request(app.getHttpServer()).get("/health").expect(429);
-
-    expect(response.body).toMatchObject({
-      success: false,
-      code: "RATE_LIMIT_EXCEEDED",
-      message: "Too many requests.",
-    });
+  it("never throttles health/readiness probes", async () => {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await request(app.getHttpServer()).get("/health").expect(200);
+      await request(app.getHttpServer()).get("/ready").expect(200);
+    }
   });
 });

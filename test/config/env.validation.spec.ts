@@ -14,6 +14,20 @@ describe("validateEnvironment", () => {
     expect(validateEnvironment(valid).PORT).toBe(4000);
   });
 
+  it("accepts redis and rediss URLs and rejects malformed Redis URLs", () => {
+    expect(validateEnvironment({ ...valid, REDIS_URL: "redis://localhost:6379" }).REDIS_URL).toBe(
+      "redis://localhost:6379",
+    );
+    expect(
+      validateEnvironment({ ...valid, REDIS_URL: "rediss://user:password@example.com:6380" })
+        .REDIS_URL,
+    ).toBe("rediss://user:password@example.com:6380");
+    expect(() => validateEnvironment({ ...valid, REDIS_URL: "narendra-ka-server" })).toThrow(
+      "REDIS_URL",
+    );
+    expect(() => validateEnvironment({ ...valid, REDIS_URL: "" })).toThrow("REDIS_URL");
+  });
+
   it("rejects unexpected infrastructure URL schemes", () => {
     expect(() => validateEnvironment({ ...valid, DATABASE_URL: "https://example.com" })).toThrow(
       "DATABASE_URL",
