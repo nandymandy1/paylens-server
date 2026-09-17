@@ -408,7 +408,9 @@ describe("AuthService credentials", () => {
       "org-1",
     );
 
-    expect(switched.accessToken).toBe("new-access");
+    // Cookie-only model: no access JWT in JSON, only the new active tenant.
+    expect(switched).not.toHaveProperty("accessToken");
+    expect(switched.activeOrganization.id).toBe("org-1");
 
     await expect(
       service.switchOrganization(

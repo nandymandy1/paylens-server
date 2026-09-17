@@ -70,6 +70,11 @@ describe.runIf(process.env.AUTH_E2E_REDIS_URL)("Authentication flows (e2e)", () 
     process.env.CORS_ORIGINS = "http://localhost:3000";
     process.env.FRONTEND_URL = "http://localhost:3000";
     process.env.EXECUTION_TRACE_ENABLED = "true";
+    // Deterministic provider posture: Google disabled here (enabled-path redirect
+    // is covered by the controller spec + live smoke).
+    process.env.GOOGLE_CLIENT_ID = "";
+    process.env.GOOGLE_CLIENT_SECRET = "";
+    process.env.GOOGLE_CALLBACK_URL = "";
 
     execSync("npx prisma migrate deploy", {
       cwd: new URL("../../../..", import.meta.url).pathname,
@@ -344,7 +349,12 @@ describe.runIf(process.env.AUTH_E2E_REDIS_URL)("Authentication flows (e2e)", () 
     await owner
       .post("/api/v1/auth/switch-organization")
       .send({ organizationId: created.body.data.organization.id })
-      .expect(200);
+      .expect(200)
+      .expect(({ body }) => {
+        // Cookie-only model: fresh JWT in HttpOnly cookie, never in JSON.
+        expect(body.data).not.toHaveProperty("accessToken");
+        expect(body.data.activeOrganization.slug).toBe("second-venture");
+      });
 
     const me = await owner.get("/api/v1/auth/me").expect(200);
 

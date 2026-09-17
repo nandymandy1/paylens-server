@@ -229,12 +229,15 @@ export class AuthController {
   @Public()
   @Get("google/start")
   @GoogleThrottle()
-  @ApiOperation({ summary: "Start the backend Google OIDC flow" })
+  @ApiOperation({ summary: "Start the backend Google OIDC flow (redirects to Google)" })
   async googleStart(
     @Query("redirect_to") redirectTo?: string,
     @Query("invitationId") invitationId?: string,
-  ) {
-    return this.google.start({ redirectTo, invitationId });
+    @Res() res?: Response,
+  ): Promise<void> {
+    const { url } = await this.google.start({ redirectTo, invitationId });
+
+    res?.redirect(url);
   }
 
   @Public()
@@ -290,9 +293,10 @@ export class AuthController {
         userAgentOf(req),
         req.requestId,
       );
+      const record = await this.sessions.getSession(req.principal.sessionId);
 
-      if (result.accessToken) {
-        setAccessCookieOnly(res, result.accessToken, this.config);
+      if (record) {
+        setAccessCookieOnly(res, this.sessions.accessTokenFor(record), this.config);
       }
 
       return result;
@@ -328,8 +332,11 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const result = await this.auth.switchOrganization(principal, dto.organizationId, req.requestId);
+    const record = await this.sessions.getSession(principal.sessionId);
 
-    setAccessCookieOnly(res, result.accessToken, this.config);
+    if (record) {
+      setAccessCookieOnly(res, this.sessions.accessTokenFor(record), this.config);
+    }
 
     return result;
   }

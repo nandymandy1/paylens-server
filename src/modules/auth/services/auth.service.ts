@@ -484,7 +484,7 @@ export class AuthService {
     });
 
     return {
-      accessToken: this.sessions.accessTokenFor(record),
+      // The fresh access JWT travels in the HttpOnly cookie only — never in JSON.
       activeOrganization: {
         id: membership.organization.id,
         name: membership.organization.name,

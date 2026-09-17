@@ -375,6 +375,8 @@ describe("InvitationService permissions", () => {
       return service.acceptAsAuthenticated(matching, "raw-invite-token", undefined);
     })();
 
-    expect(accepted.accessToken).toBe("rotated-access");
+    // Cookie-only model: membership data only, no access JWT in JSON.
+    expect(accepted).not.toHaveProperty("accessToken");
+    expect(accepted.membership.organizationId).toBe("org-1");
   });
 });

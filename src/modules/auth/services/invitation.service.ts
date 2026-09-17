@@ -219,8 +219,6 @@ export class InvitationService {
       membershipId: result.id,
       role: invitation.role,
     });
-    const record = await this.sessions.getSession(principal.sessionId);
-
     await this.audit.record("INVITATION_ACCEPTED", {
       actorUserId: user.id,
       targetUserId: user.id,
@@ -229,8 +227,8 @@ export class InvitationService {
       metadata: { invitationId: invitation.id },
     });
 
+    // Fresh access JWT travels in the HttpOnly cookie only — never in JSON.
     return {
-      accessToken: record ? this.sessions.accessTokenFor(record) : null,
       membership: { id: result.id, organizationId: result.organizationId, role: result.role },
     };
   }
