@@ -1,10 +1,25 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Req,
+  Res,
+  UseGuards,
+} from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
+import type { Response } from "express";
 import { InvitationService } from "@/modules/auth/services/invitation.service.js";
+import { SessionService } from "@/modules/auth/services/session.service.js";
 import { CurrentPrincipal } from "@/modules/auth/decorators/current-principal.decorator.js";
 import { InvitationThrottle } from "@/modules/auth/decorators/auth-throttle.decorator.js";
 import { SessionGuard, type RequestWithPrincipal } from "@/modules/auth/guards/session.guard.js";
 import type { RequestPrincipal } from "@/modules/auth/types/auth.types.js";
+import { setAccessCookieOnly } from "@/modules/auth/utils/auth-cookies.utils.js";
 import { OrganizationService } from "@/modules/organizations/organization.service.js";
 import {
   ChangeMemberRoleDto,
@@ -19,6 +34,8 @@ export class OrganizationsController {
   constructor(
     private readonly organizations: OrganizationService,
     private readonly invitations: InvitationService,
+    private readonly sessions: SessionService,
+    private readonly config: ConfigService,
   ) {}
 
   @Post()
@@ -27,13 +44,21 @@ export class OrganizationsController {
     @CurrentPrincipal() principal: RequestPrincipal,
     @Body() dto: CreateOrganizationDto,
     @Req() req: RequestWithPrincipal,
+    @Res({ passthrough: true }) res: Response,
   ) {
-    return this.organizations.createOrganization(
+    const result = await this.organizations.createOrganization(
       principal,
       dto.name,
       typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : undefined,
       req.requestId,
     );
+    const record = await this.sessions.getSession(principal.sessionId);
+
+    if (record) {
+      setAccessCookieOnly(res, this.sessions.accessTokenFor(record), this.config);
+    }
+
+    return result;
   }
 
   @Get("current/members")

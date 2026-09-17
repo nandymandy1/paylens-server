@@ -96,7 +96,6 @@ export class OrganizationService {
       membershipId: created.membership.id,
       role: "TENANT_OWNER",
     });
-    const record = await this.sessions.getSession(principal.sessionId);
 
     await this.audit.record("ORGANIZATION_CREATED", {
       actorUserId: principal.userId,
@@ -106,12 +105,12 @@ export class OrganizationService {
     });
 
     return {
+      // The fresh access JWT travels in the HttpOnly cookie only — never in JSON.
       organization: {
         id: created.organization.id,
         name: created.organization.name,
         slug: created.organization.slug,
       },
-      accessToken: record ? this.sessions.accessTokenFor(record) : null,
     };
   }
 

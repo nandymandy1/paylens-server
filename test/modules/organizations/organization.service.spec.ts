@@ -206,7 +206,8 @@ describe("OrganizationService", () => {
     };
     const created = await service.createOrganization(userWithoutOrg, "Acme", undefined);
 
-    // "acme" is taken → deterministic suffix.
+    // "acme" is taken → deterministic suffix. Cookie-only: no JWT in JSON.
     expect(created.organization.slug).toBe("acme-2");
+    expect(created).not.toHaveProperty("accessToken");
   });
 });
