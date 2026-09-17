@@ -4,7 +4,7 @@ import type { NextFunction, Request, Response } from "express";
 import { requestContext } from "@/common/context/request-context.js";
 import { ExecutionTraceService } from "@/common/tracing/execution-trace.service.js";
 
-export type RequestWithId = Request & { requestId: string };
+export type RequestWithId = Request & { requestId: string; errorCode?: string };
 
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 
@@ -28,17 +28,24 @@ export class RequestContextMiddleware implements NestMiddleware {
       });
 
       response.on("finish", () => {
+        // Auth and error code resolve after this middleware runs, so read
+        // them lazily here. Only allowlisted summary fields are logged.
+        const authUserId = requestContext.getStore()?.authUserId;
         const event = response.statusCode >= 400 ? "http.request.failed" : "http.request.completed";
         const payload = {
           event,
           requestId,
+          ...(authUserId === undefined ? {} : { authUserId }),
           method: request.method,
           path: request.path,
           statusCode: response.statusCode,
+          ...(request.errorCode === undefined ? {} : { code: request.errorCode }),
           durationMs: this.executionTrace.durationSince(startedAt),
         };
 
         if (response.statusCode >= 500) {
+          this.executionTrace.error(payload);
+        } else if (response.statusCode >= 400) {
           this.executionTrace.warn(payload);
         } else {
           this.executionTrace.info(payload);

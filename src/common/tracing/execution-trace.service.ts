@@ -16,6 +16,10 @@ export class ExecutionTraceService {
     return requestContext.getStore()?.requestId;
   }
 
+  get authUserId(): string | undefined {
+    return requestContext.getStore()?.authUserId;
+  }
+
   now(): number {
     return performance.now();
   }
@@ -29,21 +33,28 @@ export class ExecutionTraceService {
       return;
     }
 
-    this.logger.debug(this.withRequestId(event));
+    this.logger.debug(this.withContext(event));
   }
 
   info(event: TraceEvent): void {
-    this.logger.info(this.withRequestId(event));
+    this.logger.info(this.withContext(event));
   }
 
   warn(event: TraceEvent): void {
-    this.logger.warn(this.withRequestId(event));
+    this.logger.warn(this.withContext(event));
   }
 
-  private withRequestId(event: TraceEvent): TraceEvent {
+  error(event: TraceEvent): void {
+    this.logger.error(this.withContext(event));
+  }
+
+  private withContext(event: TraceEvent): TraceEvent {
+    const authUserId = event.authUserId ?? this.authUserId;
+
     return {
       ...event,
       requestId: event.requestId ?? this.requestId,
+      ...(authUserId === undefined ? {} : { authUserId }),
     };
   }
 }

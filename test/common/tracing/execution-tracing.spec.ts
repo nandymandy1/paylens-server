@@ -115,3 +115,90 @@ describe("execution tracing", () => {
     );
   });
 });
+
+describe("authenticated trace context", () => {
+  function createFullTraceService() {
+    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const config = { getOrThrow: () => true };
+    const trace = new ExecutionTraceService(config as never, logger as never);
+
+    return { logger, trace };
+  }
+
+  it("inherits authUserId from request context without manual passing", () => {
+    const { logger, trace } = createFullTraceService();
+
+    requestContext.run({ requestId: "req-123", authUserId: "usr-789" }, () => {
+      trace.info({ event: "http.request.completed" });
+    });
+
+    expect(logger.info).toHaveBeenCalledWith({
+      event: "http.request.completed",
+      requestId: "req-123",
+      authUserId: "usr-789",
+    });
+  });
+
+  it("omits authUserId entirely for anonymous requests", () => {
+    const { logger, trace } = createFullTraceService();
+
+    requestContext.run({ requestId: "req-anonymous" }, () => {
+      trace.info({ event: "http.request.completed" });
+    });
+
+    expect(logger.info).toHaveBeenCalledWith({
+      event: "http.request.completed",
+      requestId: "req-anonymous",
+    });
+    expect(logger.info.mock.calls[0][0]).not.toHaveProperty("authUserId");
+  });
+
+  it("prefers an explicit event identity over ambient context", () => {
+    const { logger, trace } = createFullTraceService();
+
+    requestContext.run({ requestId: "req-ambient", authUserId: "usr-ambient" }, () => {
+      trace.info({ event: "http.request.completed", requestId: "req-explicit" });
+    });
+
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ requestId: "req-explicit", authUserId: "usr-ambient" }),
+    );
+  });
+
+  it("routes server failures through the error level with shared context", () => {
+    const { logger, trace } = createFullTraceService();
+
+    requestContext.run({ requestId: "req-500", authUserId: "usr-789" }, () => {
+      trace.error({ event: "http.request.failed", statusCode: 500 });
+    });
+
+    expect(logger.error).toHaveBeenCalledWith({
+      event: "http.request.failed",
+      statusCode: 500,
+      requestId: "req-500",
+      authUserId: "usr-789",
+    });
+  });
+
+  it("keeps raw request material out of every trace event", () => {
+    const { logger, trace } = createFullTraceService();
+
+    requestContext.run({ requestId: "req-clean" }, () => {
+      trace.debug({ event: "controller.start", controller: "C", method: "m" });
+      trace.info({ event: "http.request.completed" });
+      trace.warn({ event: "http.request.failed" });
+    });
+
+    const payloads = [
+      ...logger.debug.mock.calls.map((call) => call[0]),
+      ...logger.info.mock.calls.map((call) => call[0]),
+      ...logger.warn.mock.calls.map((call) => call[0]),
+    ];
+
+    for (const payload of payloads) {
+      for (const key of ["req", "headers", "body", "query", "params", "cookie", "authorization"]) {
+        expect(payload).not.toHaveProperty(key);
+      }
+    }
+  });
+});

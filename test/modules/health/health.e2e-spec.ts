@@ -27,7 +27,7 @@ describe("Health endpoints (e2e)", () => {
     process.env.THROTTLE_LIMIT = "2";
     process.env.EXECUTION_TRACE_ENABLED = "true";
 
-    const { createApplication } = await import("@/main.js");
+    const { createApplication } = await import("@/application.js");
 
     app = await createApplication();
     await app.init();

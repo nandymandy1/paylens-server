@@ -11,6 +11,7 @@ import { ControllerTraceInterceptor } from "@/common/tracing/controller-trace.in
 import { ExecutionTraceService } from "@/common/tracing/execution-trace.service.js";
 import appConfig from "@/config/app.config.js";
 import { validateEnvironment } from "@/config/env.validation.js";
+import { buildLoggerModuleOptions } from "@/config/logger.config.js";
 import { DatabaseModule } from "@/database/database.module.js";
 import { HealthModule } from "@/modules/health/health.module.js";
 import { QueueModule } from "@/queue/queue.module.js";
@@ -27,28 +28,7 @@ import { RedisModule } from "@/redis/redis.module.js";
     LoggerModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        pinoHttp: {
-          autoLogging: false,
-          level: config.getOrThrow<string>("app.logLevel"),
-          redact: {
-            paths: [
-              "req.headers.authorization",
-              "req.headers.cookie",
-              "req.body.password",
-              "req.body.passwordHash",
-              "req.body.accessToken",
-              "req.body.refreshToken",
-              "req.body.invitationToken",
-              "req.body.resetToken",
-            ],
-            censor: "[REDACTED]",
-          },
-          customProps: (request) => ({
-            requestId: (request as { requestId?: string }).requestId,
-          }),
-        },
-      }),
+      useFactory: buildLoggerModuleOptions,
     }),
     ThrottlerModule.forRootAsync({
       imports: [ConfigModule],

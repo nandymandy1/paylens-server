@@ -56,6 +56,10 @@ export class HttpExceptionFilter extends BaseExceptionFilter {
       body.details = exceptionBody.details;
     }
 
+    // Surfaced on the allowlisted http.request.failed summary event. The full
+    // stack below is logged once centrally for 5xx; 4xx carry code only.
+    request.errorCode = body.code;
+
     if (status >= 500) {
       this.logger.error(
         { err: exception, requestId: request.requestId },
