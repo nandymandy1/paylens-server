@@ -1,0 +1,16 @@
+node_modules
+dist
+coverage
+
+.graphify
+graphify-out
+
+*.tsbuildinfo
+
+package-lock.json
+
+prisma/generated/
+
+.env
+.env.*
+!.env.example

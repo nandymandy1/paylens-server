@@ -6,14 +6,12 @@ export type BaseResponse = {
 
 export type BaseResponseWithData<
   T,
-  RecordKey extends string = 'data',
+  RecordKey extends string = "data",
 > = RecordKey extends keyof BaseResponse
   ? never
-  : BaseResponse & {
-    success: true
-} & Record<RecordKey, T>;
+  : Omit<BaseResponse, "success"> & { success: true } & Record<RecordKey, T>;
 
-export type ApiErrorResponse<TDetails = unknown> = BaseResponse & {
+export type ApiErrorResponse<TDetails = unknown> = Omit<BaseResponse, "success"> & {
   success: false;
   code: string;
   details?: TDetails;

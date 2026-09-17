@@ -1,13 +1,20 @@
-import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
-import { ThrottlerModule } from '@nestjs/throttler';
-import { LoggerModule } from 'nestjs-pino';
-import appConfig from './config/app.config.js';
-import { validateEnvironment } from './config/env.validation.js';
-import { DatabaseModule } from './database/database.module.js';
-import { HealthModule } from './modules/health/health.module.js';
-import { QueueModule } from './queue/queue.module.js';
-import { RedisModule } from './redis/redis.module.js';
+import { MiddlewareConsumer, Module, NestModule, RequestMethod } from "@nestjs/common";
+import { ConfigModule, ConfigService } from "@nestjs/config";
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR, APP_PIPE } from "@nestjs/core";
+import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
+import { LoggerModule } from "nestjs-pino";
+import { HttpExceptionFilter } from "@/common/filters/http-exception.filter.js";
+import { ResponseEnvelopeInterceptor } from "@/common/interceptors/response-envelope.interceptor.js";
+import { RequestContextMiddleware } from "@/common/middleware/request-id.middleware.js";
+import { createGlobalValidationPipe } from "@/common/pipes/global-validation.pipe.js";
+import { ControllerTraceInterceptor } from "@/common/tracing/controller-trace.interceptor.js";
+import { ExecutionTraceService } from "@/common/tracing/execution-trace.service.js";
+import appConfig from "@/config/app.config.js";
+import { validateEnvironment } from "@/config/env.validation.js";
+import { DatabaseModule } from "@/database/database.module.js";
+import { HealthModule } from "@/modules/health/health.module.js";
+import { QueueModule } from "@/queue/queue.module.js";
+import { RedisModule } from "@/redis/redis.module.js";
 
 @Module({
   imports: [
@@ -17,31 +24,59 @@ import { RedisModule } from './redis/redis.module.js';
       load: [appConfig],
       validate: validateEnvironment,
     }),
-    LoggerModule.forRoot({
-      pinoHttp: {
-        redact: {
-          paths: [
-            'req.headers.authorization',
-            'req.headers.cookie',
-            'req.body.password',
-            'req.body.passwordHash',
-            'req.body.accessToken',
-            'req.body.refreshToken',
-            'req.body.invitationToken',
-            'req.body.resetToken',
-          ],
-          censor: '[REDACTED]',
+    LoggerModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        pinoHttp: {
+          autoLogging: false,
+          level: config.getOrThrow<string>("app.logLevel"),
+          redact: {
+            paths: [
+              "req.headers.authorization",
+              "req.headers.cookie",
+              "req.body.password",
+              "req.body.passwordHash",
+              "req.body.accessToken",
+              "req.body.refreshToken",
+              "req.body.invitationToken",
+              "req.body.resetToken",
+            ],
+            censor: "[REDACTED]",
+          },
+          customProps: (request) => ({
+            requestId: (request as { requestId?: string }).requestId,
+          }),
         },
-        customProps: (request) => ({
-          requestId: (request as { requestId?: string }).requestId,
-        }),
-      },
+      }),
     }),
-    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
+    ThrottlerModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => [
+        {
+          ttl: config.getOrThrow<number>("app.throttleTtlMs"),
+          limit: config.getOrThrow<number>("app.throttleLimit"),
+        },
+      ],
+    }),
     DatabaseModule,
     RedisModule,
     QueueModule,
     HealthModule,
   ],
+  providers: [
+    ExecutionTraceService,
+    RequestContextMiddleware,
+    { provide: APP_PIPE, useFactory: createGlobalValidationPipe },
+    { provide: APP_FILTER, useClass: HttpExceptionFilter },
+    { provide: APP_INTERCEPTOR, useClass: ControllerTraceInterceptor },
+    { provide: APP_INTERCEPTOR, useClass: ResponseEnvelopeInterceptor },
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+  ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer): void {
+    consumer.apply(RequestContextMiddleware).forRoutes({ path: "*", method: RequestMethod.ALL });
+  }
+}
