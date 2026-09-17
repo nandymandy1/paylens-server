@@ -1,58 +1,53 @@
 import { execSync } from "node:child_process";
 import type { INestApplication } from "@nestjs/common";
+import { getQueueToken } from "@nestjs/bullmq";
+import type { Queue } from "bullmq";
 import { GenericContainer, type StartedTestContainer } from "testcontainers";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { EmailService } from "@/modules/email/email.service.js";
+import { EMAIL_QUEUE } from "@/modules/email/email.constants.js";
+import type { EmailJob } from "@/modules/email/email.type.js";
 
 // Runs only against an explicitly supplied external Redis; never provisions one via Docker.
 describe.runIf(process.env.AUTH_E2E_REDIS_URL)("Authentication flows (e2e)", () => {
   let app: INestApplication;
   let postgres: StartedTestContainer;
-  let outbox: EmailService;
+  let emailQueue: Queue<EmailJob>;
   const originalEnvironment = { ...process.env };
 
-  const verificationTokenFor = (email: string): string => {
-    const entry = [...outbox.outbox]
-      .reverse()
-      .find((item) => item.to === email && item.html.includes("/verify-email?token="));
+  // Email delivery is async through BullMQ. The queue stays paused here so jobs
+  // remain waiting (no delivery, no logging) while tests read their payloads.
+  const jobUrlFor = async (
+    email: string,
+    field: "verificationUrl" | "resetUrl" | "invitationUrl",
+  ): Promise<string> => {
+    const jobs = await emailQueue.getJobs(["waiting", "delayed", "active", "completed"]);
 
-    if (!entry) {
-      throw new Error(`no verification email for ${email}`);
+    const match = [...jobs].reverse().find((job) => {
+      if (job.data.to !== email) {
+        return false;
+      }
+
+      const url = (job.data as Partial<Record<typeof field, unknown>>)[field];
+
+      return typeof url === "string";
+    });
+
+    if (!match) {
+      throw new Error(`no email job for ${email}`);
     }
 
-    return new URL(entry.html.match(/href="([^"]+)"/)?.[1] as string).searchParams.get(
-      "token",
-    ) as string;
+    const url = (match.data as unknown as Record<typeof field, string>)[field];
+
+    return new URL(url).searchParams.get("token") as string;
   };
 
-  const resetTokenFor = (email: string): string => {
-    const entry = [...outbox.outbox]
-      .reverse()
-      .find((item) => item.to === email && item.html.includes("/reset-password?token="));
+  const verificationTokenFor = (email: string): Promise<string> =>
+    jobUrlFor(email, "verificationUrl");
 
-    if (!entry) {
-      throw new Error(`no reset email for ${email}`);
-    }
+  const resetTokenFor = (email: string): Promise<string> => jobUrlFor(email, "resetUrl");
 
-    return new URL(entry.html.match(/href="([^"]+)"/)?.[1] as string).searchParams.get(
-      "token",
-    ) as string;
-  };
-
-  const inviteTokenFor = (email: string): string => {
-    const entry = [...outbox.outbox]
-      .reverse()
-      .find((item) => item.to === email && item.html.includes("/invite/accept?token="));
-
-    if (!entry) {
-      throw new Error(`no invitation email for ${email}`);
-    }
-
-    return new URL(entry.html.match(/href="([^"]+)"/)?.[1] as string).searchParams.get(
-      "token",
-    ) as string;
-  };
+  const inviteTokenFor = (email: string): Promise<string> => jobUrlFor(email, "invitationUrl");
 
   beforeAll(async () => {
     postgres = await new GenericContainer("postgres:16-alpine")
@@ -86,10 +81,15 @@ describe.runIf(process.env.AUTH_E2E_REDIS_URL)("Authentication flows (e2e)", () 
 
     app = await createApplication();
     await app.init();
-    outbox = app.get(EmailService);
+    emailQueue = app.get<Queue<EmailJob>>(getQueueToken(EMAIL_QUEUE));
+    await emailQueue.pause();
   }, 180_000);
 
   afterAll(async () => {
+    // Pause state lives in Redis: always resume so later suites/processes
+    // sharing the external test Redis are unaffected.
+    await emailQueue?.drain().catch(() => undefined);
+    await emailQueue?.resume().catch(() => undefined);
     await app?.close();
     await postgres?.stop();
     process.env = originalEnvironment;
@@ -121,7 +121,7 @@ describe.runIf(process.env.AUTH_E2E_REDIS_URL)("Authentication flows (e2e)", () 
         expect(body.code).toBe("EMAIL_NOT_VERIFIED");
       });
 
-    const token = verificationTokenFor("owner@acme.example");
+    const token = await verificationTokenFor("owner@acme.example");
     const agent = request.agent(app.getHttpServer());
 
     await agent.post("/api/v1/auth/verify-email").send({ token }).expect(200);
@@ -167,7 +167,7 @@ describe.runIf(process.env.AUTH_E2E_REDIS_URL)("Authentication flows (e2e)", () 
       })
       .expect(201);
 
-    const rivalToken = verificationTokenFor("rival@example.com");
+    const rivalToken = await verificationTokenFor("rival@example.com");
     const rival = request.agent(app.getHttpServer());
 
     await rival.post("/api/v1/auth/verify-email").send({ token: rivalToken }).expect(200);
@@ -248,7 +248,7 @@ describe.runIf(process.env.AUTH_E2E_REDIS_URL)("Authentication flows (e2e)", () 
 
     expect(unknown.body.data.message).toContain("If an eligible account exists");
 
-    const token = resetTokenFor("owner@acme.example");
+    const token = await resetTokenFor("owner@acme.example");
 
     await request(app.getHttpServer())
       .post("/api/v1/auth/reset-password")
@@ -295,7 +295,7 @@ describe.runIf(process.env.AUTH_E2E_REDIS_URL)("Authentication flows (e2e)", () 
 
     const preview = await request(app.getHttpServer())
       .get("/api/v1/auth/invitations/preview")
-      .query({ token: inviteTokenFor("admin@acme.example") })
+      .query({ token: await inviteTokenFor("admin@acme.example") })
       .expect(200);
 
     expect(preview.body.data.organization.name).toBe("Acme Industries");
@@ -305,7 +305,7 @@ describe.runIf(process.env.AUTH_E2E_REDIS_URL)("Authentication flows (e2e)", () 
     await admin
       .post("/api/v1/auth/invitations/accept")
       .send({
-        token: inviteTokenFor("admin@acme.example"),
+        token: await inviteTokenFor("admin@acme.example"),
         firstName: "Admin",
         lastName: "User",
         password: "correct horse battery staple",

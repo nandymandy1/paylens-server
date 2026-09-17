@@ -1,48 +1,73 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { EMAIL_JOB } from "@/modules/email/email.constants.js";
 import { EmailService } from "@/modules/email/email.service.js";
 
-const configFor = (overrides: Record<string, string | number | boolean> = {}) =>
-  ({
-    getOrThrow: (key: string) => {
-      const values: Record<string, string | number | boolean> = {
-        "app.smtpHost": "",
-        "app.smtpPort": 587,
-        "app.smtpSecure": false,
-        "app.smtpUser": "",
-        "app.smtpPassword": "",
-        "app.emailFrom": "PayLens <noreply@paylens.local>",
-        ...overrides,
-      };
+const createService = () => {
+  const queue = { add: vi.fn(async () => ({})) };
+  const service = new EmailService(queue as never);
 
-      return values[key];
-    },
-  }) as never;
+  return { service, queue };
+};
 
-describe("EmailService", () => {
-  it("keeps mail in memory when SMTP is not configured", async () => {
-    const service = new EmailService(configFor());
+describe("EmailService producer", () => {
+  let harness: ReturnType<typeof createService>;
 
-    expect(service.usesSmtp).toBe(false);
+  beforeEach(() => {
+    harness = createService();
+  });
 
-    await service.sendVerificationEmail(
+  it("enqueues verification email without touching SMTP", async () => {
+    await harness.service.sendVerificationEmail(
       "hr@acme.example",
       "http://localhost:3000/verify-email?token=abc",
     );
-    await service.sendPasswordResetEmail(
+
+    expect(harness.queue.add).toHaveBeenCalledWith(
+      EMAIL_JOB.VERIFY_EMAIL,
+      {
+        type: "VERIFY_EMAIL",
+        to: "hr@acme.example",
+        verificationUrl: "http://localhost:3000/verify-email?token=abc",
+      },
+      expect.objectContaining({ attempts: 3 }),
+    );
+  });
+
+  it("enqueues password-reset email", async () => {
+    await harness.service.sendPasswordResetEmail(
       "hr@acme.example",
       "http://localhost:3000/reset-password?token=abc",
     );
-    await service.sendInvitationEmail(
+
+    expect(harness.queue.add).toHaveBeenCalledWith(
+      EMAIL_JOB.PASSWORD_RESET,
+      expect.objectContaining({ type: "PASSWORD_RESET", to: "hr@acme.example" }),
+      expect.objectContaining({ attempts: 3 }),
+    );
+  });
+
+  it("enqueues organization invitations with tenant context", async () => {
+    await harness.service.sendInvitationEmail(
       "new@acme.example",
       "Acme",
       "EMPLOYEE",
       "http://localhost:3000/invite/accept?token=abc",
     );
 
-    expect(service.outbox).toHaveLength(3);
-    expect(service.outbox[0].to).toBe("hr@acme.example");
-    // Email bodies carry single-use links only — never passwords or session tokens.
-    expect(service.outbox[0].html).toContain("/verify-email?token=");
-    expect(service.outbox[0].html).not.toContain("password");
+    expect(harness.queue.add).toHaveBeenCalledWith(
+      EMAIL_JOB.ORGANIZATION_INVITATION,
+      {
+        type: "ORGANIZATION_INVITATION",
+        to: "new@acme.example",
+        invitationUrl: "http://localhost:3000/invite/accept?token=abc",
+        organizationName: "Acme",
+        role: "EMPLOYEE",
+      },
+      expect.objectContaining({ attempts: 3 }),
+    );
+  });
+
+  it("exposes no process-memory outbox", () => {
+    expect(harness.service).not.toHaveProperty("outbox");
   });
 });
