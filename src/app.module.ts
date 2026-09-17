@@ -5,6 +5,7 @@ import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
 import { LoggerModule } from "nestjs-pino";
 import { HttpExceptionFilter } from "@/common/filters/http-exception.filter.js";
 import { ResponseEnvelopeInterceptor } from "@/common/interceptors/response-envelope.interceptor.js";
+import { CsrfOriginMiddleware } from "@/common/middleware/csrf-origin.middleware.js";
 import { RequestContextMiddleware } from "@/common/middleware/request-id.middleware.js";
 import { createGlobalValidationPipe } from "@/common/pipes/global-validation.pipe.js";
 import { ControllerTraceInterceptor } from "@/common/tracing/controller-trace.interceptor.js";
@@ -54,6 +55,7 @@ import { RedisModule } from "@/redis/redis.module.js";
   providers: [
     ExecutionTraceService,
     RequestContextMiddleware,
+    CsrfOriginMiddleware,
     { provide: APP_PIPE, useFactory: createGlobalValidationPipe },
     { provide: APP_FILTER, useClass: HttpExceptionFilter },
     { provide: APP_INTERCEPTOR, useClass: ControllerTraceInterceptor },
@@ -63,6 +65,8 @@ import { RedisModule } from "@/redis/redis.module.js";
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
-    consumer.apply(RequestContextMiddleware).forRoutes({ path: "*", method: RequestMethod.ALL });
+    consumer
+      .apply(RequestContextMiddleware, CsrfOriginMiddleware)
+      .forRoutes({ path: "*", method: RequestMethod.ALL });
   }
 }

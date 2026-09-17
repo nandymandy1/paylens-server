@@ -476,11 +476,14 @@ export class AuthService {
       );
     }
 
-    await this.audit.record("SESSION_REVOKED", {
+    await this.audit.record("ORGANIZATION_SWITCHED", {
       actorUserId: principal.userId,
       organizationId: membership.organizationId,
       requestId,
-      metadata: { reason: "organization-switch" },
+      metadata: {
+        previousOrganizationId: principal.organizationId ?? null,
+        organizationId: membership.organizationId,
+      },
     });
 
     return {

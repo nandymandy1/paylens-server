@@ -105,13 +105,16 @@ export class EmailProcessor extends WorkerHost {
     // be logged, so local auth flows stay testable without a mail provider.
     this.logger.info(
       {
+        url: built.url,
+        to: job.data.to,
         event: "dev.email",
         type: job.data.type,
-        to: job.data.to,
         subject: built.subject,
-        url: built.url,
         ...(job.data.type === "ORGANIZATION_INVITATION"
-          ? { organization: job.data.organizationName, role: job.data.role }
+          ? {
+              organization: job.data.organizationName,
+              role: job.data.role,
+            }
           : {}),
       },
       `[DEV EMAIL] type=${job.data.type} to=${job.data.to}`,

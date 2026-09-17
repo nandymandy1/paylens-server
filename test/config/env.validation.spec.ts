@@ -52,11 +52,20 @@ describe("validateEnvironment", () => {
     expect(parsed.FRONTEND_URL).toBe("http://localhost:3000");
     expect(parsed.GOOGLE_CLIENT_ID).toBe("");
 
-    expect(() => validateEnvironment({ ...valid, NODE_ENV: "production" })).toThrow(
-      "AUTH_ACCESS_TOKEN_SECRET",
-    );
     expect(() =>
-      validateEnvironment({ ...valid, NODE_ENV: "production", AUTH_ACCESS_TOKEN_SECRET: "short" }),
+      validateEnvironment({
+        ...valid,
+        NODE_ENV: "production",
+        FRONTEND_URL: "https://app.paylens.example",
+      }),
+    ).toThrow("AUTH_ACCESS_TOKEN_SECRET");
+    expect(() =>
+      validateEnvironment({
+        ...valid,
+        NODE_ENV: "production",
+        FRONTEND_URL: "https://app.paylens.example",
+        AUTH_ACCESS_TOKEN_SECRET: "short",
+      }),
     ).toThrow("AUTH_ACCESS_TOKEN_SECRET");
   });
 
@@ -88,5 +97,74 @@ describe("validateEnvironment", () => {
     });
 
     expect(parsed.SMTP_HOST).toBe("smtp.example");
+  });
+
+  it("hardens production auth configuration and keeps localhost development valid", () => {
+    const production = {
+      NODE_ENV: "production",
+      PORT: "4000",
+      DATABASE_URL: "postgresql://user:pass@db:5432/paylens",
+      REDIS_URL: "redis://redis:6379",
+      CORS_ORIGINS: "https://app.paylens.example",
+      AUTH_ACCESS_TOKEN_SECRET: "a".repeat(32),
+    };
+
+    expect(() => validateEnvironment(production)).toThrow("FRONTEND_URL");
+    expect(() =>
+      validateEnvironment({ ...production, FRONTEND_URL: "http://app.paylens.example" }),
+    ).toThrow("FRONTEND_URL");
+    expect(() =>
+      validateEnvironment({
+        ...production,
+        FRONTEND_URL: "https://app.paylens.example",
+        AUTH_COOKIE_SECURE: "false",
+      }),
+    ).toThrow("AUTH_COOKIE_SECURE");
+    expect(() =>
+      validateEnvironment({
+        ...production,
+        FRONTEND_URL: "https://app.paylens.example",
+        AUTH_COOKIE_SAME_SITE: "none",
+        AUTH_COOKIE_SECURE: "false",
+      }),
+    ).toThrow("AUTH_COOKIE_SECURE");
+    expect(() =>
+      validateEnvironment({
+        ...valid,
+        AUTH_COOKIE_SAME_SITE: "none",
+        AUTH_COOKIE_SECURE: "false",
+      }),
+    ).toThrow("AUTH_COOKIE_SAME_SITE=none");
+    expect(() =>
+      validateEnvironment({
+        ...production,
+        FRONTEND_URL: "https://app.paylens.example",
+        GOOGLE_CLIENT_ID: "id",
+        GOOGLE_CLIENT_SECRET: "secret",
+        GOOGLE_CALLBACK_URL: "http://api.paylens.example/api/v1/auth/google/callback",
+      }),
+    ).toThrow("GOOGLE_CALLBACK_URL");
+
+    const parsed = validateEnvironment({
+      ...production,
+      FRONTEND_URL: "https://app.paylens.example",
+      GOOGLE_CLIENT_ID: "id",
+      GOOGLE_CLIENT_SECRET: "secret",
+      GOOGLE_CALLBACK_URL: "https://api.paylens.example/api/v1/auth/google/callback",
+    });
+
+    expect(parsed.FRONTEND_URL).toBe("https://app.paylens.example");
+    expect(parsed.AUTH_COOKIE_SECURE).toBe(true);
+
+    const development = validateEnvironment({
+      ...valid,
+      NODE_ENV: "development",
+      AUTH_ACCESS_TOKEN_SECRET: "b".repeat(32),
+      GOOGLE_CLIENT_ID: "id",
+      GOOGLE_CLIENT_SECRET: "secret",
+      GOOGLE_CALLBACK_URL: "http://localhost:4000/api/v1/auth/google/callback",
+    });
+
+    expect(development.FRONTEND_URL).toBe("http://localhost:3000");
   });
 });

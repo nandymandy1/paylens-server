@@ -108,7 +108,15 @@ const createHarness = (inviterRole: MembershipRoleName) => {
               invitation.id === where.id && invitation.organizationId === where.organizationId,
           ) ?? null,
       ),
-      findMany: vi.fn(async () => invitations),
+      findMany: vi.fn(async (args?: { where?: Record<string, unknown> }) => {
+        const role = args?.where?.role;
+
+        if (typeof role === "string") {
+          return invitations.filter((invitation) => invitation.role === role);
+        }
+
+        return invitations;
+      }),
       update: vi.fn(
         async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
           const invitation = invitations.find((entry) => entry.id === where.id) as Record<
@@ -378,5 +386,65 @@ describe("InvitationService permissions", () => {
     // Cookie-only model: membership data only, no access JWT in JSON.
     expect(accepted).not.toHaveProperty("accessToken");
     expect(accepted.membership.organizationId).toBe("org-1");
+  });
+
+  it("rejects invitation acceptance for suspended users", async () => {
+    const { service, users } = createHarness("TENANT_OWNER");
+
+    users.push({
+      id: "user-suspended",
+      email: "suspended@acme.example",
+      emailVerifiedAt: new Date(),
+      status: "SUSPENDED",
+    });
+
+    await service.invite(principalFor("TENANT_OWNER"), "suspended@acme.example", "EMPLOYEE");
+
+    await expect(
+      service.acceptAsAuthenticated(
+        {
+          userId: "user-suspended",
+          sessionId: "session-s",
+          organizationId: null,
+          membershipId: null,
+          role: null,
+        },
+        "raw-invite-token",
+        undefined,
+      ),
+    ).rejects.toMatchObject({ code: "ACCOUNT_SUSPENDED" });
+  });
+
+  it("restricts invitation listing to member admins and scopes HR_MANAGER to employees", async () => {
+    const owner = createHarness("TENANT_OWNER");
+
+    await owner.service.invite(principalFor("TENANT_OWNER"), "employee@acme.example", "EMPLOYEE");
+    await owner.service.invite(principalFor("TENANT_OWNER"), "manager@acme.example", "MANAGER");
+
+    await expect(owner.service.list(principalFor("TENANT_OWNER"))).resolves.toHaveLength(2);
+
+    const admin = createHarness("HR_ADMIN");
+
+    admin.invitations.push(...owner.invitations);
+    await expect(admin.service.list(principalFor("HR_ADMIN"))).resolves.toHaveLength(2);
+
+    const manager = createHarness("HR_MANAGER");
+
+    manager.invitations.push(...owner.invitations);
+
+    const scoped = await manager.service.list(principalFor("HR_MANAGER"));
+
+    expect(scoped).toHaveLength(1);
+    expect(scoped[0].role).toBe("EMPLOYEE");
+  });
+
+  it("forbids invitation listing for MANAGER, EMPLOYEE, and VIEWER_AUDITOR", async () => {
+    for (const role of ["MANAGER", "EMPLOYEE", "VIEWER_AUDITOR"] as const) {
+      const { service } = createHarness(role);
+
+      await expect(service.list(principalFor(role))).rejects.toMatchObject({
+        code: "INSUFFICIENT_PERMISSION",
+      });
+    }
   });
 });

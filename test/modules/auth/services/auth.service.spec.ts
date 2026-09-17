@@ -417,7 +417,7 @@ describe("AuthService credentials", () => {
   });
 
   it("switches organization only for owned memberships", async () => {
-    const { service, sessions, email } = context;
+    const { service, sessions, email, audit } = context;
 
     await service.register(validRegistration);
     await service.verifyEmail(
@@ -441,6 +441,19 @@ describe("AuthService credentials", () => {
     // Cookie-only model: no access JWT in JSON, only the new active tenant.
     expect(switched).not.toHaveProperty("accessToken");
     expect(switched.activeOrganization.id).toBe("org-1");
+    expect(audit.record).toHaveBeenCalledWith(
+      "ORGANIZATION_SWITCHED",
+      expect.objectContaining({
+        organizationId: "org-1",
+        metadata: expect.objectContaining({ organizationId: "org-1" }),
+      }),
+    );
+    expect(audit.record).not.toHaveBeenCalledWith(
+      "SESSION_REVOKED",
+      expect.objectContaining({
+        metadata: expect.objectContaining({ reason: "organization-switch" }),
+      }),
+    );
 
     await expect(
       service.switchOrganization(

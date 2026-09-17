@@ -181,6 +181,7 @@ const validateSameSite = (value: unknown): ValidatedEnvironment["AUTH_COOKIE_SAM
 
 const validateGoogleGroup = (
   raw: Record<string, unknown>,
+  nodeEnv: Environment,
 ): { clientId: string; clientSecret: string; callbackUrl: string } => {
   const clientId = raw.GOOGLE_CLIENT_ID === undefined ? "" : String(raw.GOOGLE_CLIENT_ID);
   const clientSecret =
@@ -195,7 +196,11 @@ const validateGoogleGroup = (
   }
 
   if (present === 3) {
-    requireUrl(callbackUrl, "GOOGLE_CALLBACK_URL", ["http:", "https:"]);
+    requireUrl(
+      callbackUrl,
+      "GOOGLE_CALLBACK_URL",
+      nodeEnv === "production" ? ["https:"] : ["http:", "https:"],
+    );
   }
 
   return { clientId, clientSecret, callbackUrl };
@@ -237,6 +242,15 @@ export const validateEnvironment = (raw: Record<string, unknown>): ValidatedEnvi
     "http://localhost:3000",
     ["http:", "https:"],
   );
+
+  if (nodeEnv === "production") {
+    if (raw.FRONTEND_URL === undefined || raw.FRONTEND_URL === "") {
+      throw new Error("FRONTEND_URL is required in production");
+    }
+
+    requireUrl(raw.FRONTEND_URL, "FRONTEND_URL", ["https:"]);
+  }
+
   const authAccessTokenSecret = validateAuthSecret(raw.AUTH_ACCESS_TOKEN_SECRET, nodeEnv);
   const authAccessTtl = validateInteger(
     raw.AUTH_ACCESS_TTL_SECONDS,
@@ -258,6 +272,15 @@ export const validateEnvironment = (raw: Record<string, unknown>): ValidatedEnvi
     "AUTH_COOKIE_SECURE",
   );
   const authCookieSameSite = validateSameSite(raw.AUTH_COOKIE_SAME_SITE);
+
+  if (nodeEnv === "production" && !authCookieSecure) {
+    throw new Error("AUTH_COOKIE_SECURE must be true in production");
+  }
+
+  if (authCookieSameSite === "none" && !authCookieSecure) {
+    throw new Error("AUTH_COOKIE_SAME_SITE=none requires AUTH_COOKIE_SECURE=true");
+  }
+
   const authCookieDomain =
     raw.AUTH_COOKIE_DOMAIN === undefined || raw.AUTH_COOKIE_DOMAIN === ""
       ? ""
@@ -271,7 +294,7 @@ export const validateEnvironment = (raw: Record<string, unknown>): ValidatedEnvi
     raw.EMAIL_FROM === undefined || raw.EMAIL_FROM === ""
       ? "PayLens <noreply@paylens.local>"
       : String(raw.EMAIL_FROM);
-  const google = validateGoogleGroup(raw);
+  const google = validateGoogleGroup(raw, nodeEnv);
 
   validateSmtpGroup({ smtpHost, smtpUser, smtpPassword });
 

@@ -29,7 +29,11 @@ describe("EmailService producer", () => {
         to: "hr@acme.example",
         verificationUrl: "http://localhost:3000/verify-email?token=abc",
       },
-      expect.objectContaining({ attempts: 3 }),
+      expect.objectContaining({
+        attempts: 3,
+        removeOnComplete: true,
+        removeOnFail: true,
+      }),
     );
   });
 
@@ -42,7 +46,11 @@ describe("EmailService producer", () => {
     expect(harness.queue.add).toHaveBeenCalledWith(
       EMAIL_JOB.PASSWORD_RESET,
       expect.objectContaining({ type: "PASSWORD_RESET", to: "hr@acme.example" }),
-      expect.objectContaining({ attempts: 3 }),
+      expect.objectContaining({
+        attempts: 3,
+        removeOnComplete: true,
+        removeOnFail: true,
+      }),
     );
   });
 
@@ -63,7 +71,12 @@ describe("EmailService producer", () => {
         organizationName: "Acme",
         role: "EMPLOYEE",
       },
-      expect.objectContaining({ attempts: 3 }),
+      expect.objectContaining({
+        attempts: 3,
+        backoff: { type: "exponential", delay: 2_000 },
+        removeOnComplete: true,
+        removeOnFail: true,
+      }),
     );
   });
 

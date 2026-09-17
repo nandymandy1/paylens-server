@@ -5,7 +5,10 @@ import { JwtService } from "@nestjs/jwt";
 import type { Redis } from "ioredis";
 import { RedisService } from "@/redis/redis.service.js";
 import { AuthException } from "@/modules/auth/auth.exception.js";
-import { AUTH_ERROR_CODES } from "@/modules/auth/constants/auth.constants.js";
+import {
+  AUTH_ERROR_CODES,
+  OAUTH_STATE_TTL_SECONDS,
+} from "@/modules/auth/constants/auth.constants.js";
 import type { OAuthStateRecord, SessionRecord } from "@/modules/auth/types/auth.types.js";
 import type { MembershipRoleName } from "@/modules/auth/constants/auth.constants.js";
 import {
@@ -15,24 +18,10 @@ import {
   sessionKey,
   userSessionsKey,
 } from "@/modules/auth/utils/auth.utils.js";
-
-const ROTATE_SCRIPT = `
-local data = redis.call("GET", KEYS[1])
-if not data then
-  return 0
-end
-local ok, record = pcall(cjson.decode, data)
-if not ok then
-  return -2
-end
-if record.refreshTokenHash ~= ARGV[1] then
-  return -1
-end
-record.refreshTokenHash = ARGV[2]
-record.lastRefreshedAt = ARGV[3]
-redis.call("SET", KEYS[1], cjson.encode(record), "EX", ARGV[4])
-return 1
-`;
+import {
+  ROTATE_SCRIPT,
+  CONSUME_OAUTH_STATE_SCRIPT,
+} from "@/modules/auth/constants/redis.constant.js";
 
 export type CreatedSession = {
   sessionId: string;
@@ -98,6 +87,7 @@ export class SessionService {
       this.refreshTtlSeconds,
     );
     await this.redis.sadd(userSessionsKey(options.userId), sessionId);
+    await this.redis.expire(userSessionsKey(options.userId), this.refreshTtlSeconds);
 
     return {
       sessionId,
@@ -136,7 +126,6 @@ export class SessionService {
       expectedHash,
       hashOpaqueToken(nextSecret),
       now,
-      this.refreshTtlSeconds,
     )) as number;
 
     if (rotated === 1) {
@@ -227,18 +216,21 @@ export class SessionService {
   }
 
   async saveOAuthState(state: string, record: OAuthStateRecord): Promise<void> {
-    await this.redis.set(oauthStateKey(state), JSON.stringify(record), "EX", 600);
+    await this.redis.set(
+      oauthStateKey(state),
+      JSON.stringify(record),
+      "EX",
+      OAUTH_STATE_TTL_SECONDS,
+    );
   }
 
   async consumeOAuthState(state: string): Promise<OAuthStateRecord | null> {
     const key = oauthStateKey(state);
-    const raw = await this.redis.get(key);
+    const raw = (await this.redis.eval(CONSUME_OAUTH_STATE_SCRIPT, 1, key)) as string | null;
 
     if (!raw) {
       return null;
     }
-
-    await this.redis.del(key);
 
     try {
       return JSON.parse(raw) as OAuthStateRecord;

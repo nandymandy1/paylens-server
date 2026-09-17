@@ -13,6 +13,11 @@ import {
 import { ConfigService } from "@nestjs/config";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
 import type { Request, Response } from "express";
+import { AuthException } from "@/modules/auth/auth.exception.js";
+import {
+  AUTH_ERROR_CODES,
+  OAUTH_STATE_COOKIE_NAME,
+} from "@/modules/auth/constants/auth.constants.js";
 import { AuditService } from "@/modules/auth/services/audit.service.js";
 import { AuthService } from "@/modules/auth/services/auth.service.js";
 import { GoogleService } from "@/modules/auth/services/google.service.js";
@@ -31,8 +36,7 @@ import {
   ResetPasswordThrottle,
 } from "@/modules/auth/decorators/auth-throttle.decorator.js";
 import {
-  AcceptInvitationDto,
-  AcceptInvitationNewUserDto,
+  AcceptInvitationRequestDto,
   ForgotPasswordDto,
   LoginDto,
   RegisterDto,
@@ -50,8 +54,10 @@ import {
 import type { RequestPrincipal } from "@/modules/auth/types/auth.types.js";
 import {
   clearAuthCookies,
+  clearOAuthStateCookie,
   setAccessCookieOnly,
   setAuthCookies,
+  setOAuthStateCookie,
 } from "@/modules/auth/utils/auth-cookies.utils.js";
 import { getSafeRedirectPath } from "@/modules/auth/utils/auth.utils.js";
 
@@ -235,7 +241,11 @@ export class AuthController {
     @Query("invitationId") invitationId?: string,
     @Res() res?: Response,
   ): Promise<void> {
-    const { url } = await this.google.start({ redirectTo, invitationId });
+    const { url, state } = await this.google.start({ redirectTo, invitationId });
+
+    if (res) {
+      setOAuthStateCookie(res, state, this.config);
+    }
 
     res?.redirect(url);
   }
@@ -250,13 +260,27 @@ export class AuthController {
     @Req() req: RequestWithPrincipal,
     @Res() res: Response,
   ): Promise<void> {
-    const result = await this.google.callback({
-      code,
-      state,
-      userAgent: userAgentOf(req),
-      requestId: req.requestId,
-    });
+    const browserState =
+      typeof req.cookies?.[OAUTH_STATE_COOKIE_NAME] === "string"
+        ? (req.cookies[OAUTH_STATE_COOKIE_NAME] as string)
+        : undefined;
 
+    let result: { session: { accessToken: string; refreshToken: string }; redirectTo: string };
+
+    try {
+      result = await this.google.callback({
+        code,
+        state,
+        browserState,
+        userAgent: userAgentOf(req),
+        requestId: req.requestId,
+      });
+    } catch (error) {
+      clearOAuthStateCookie(res, this.config);
+      throw error;
+    }
+
+    clearOAuthStateCookie(res, this.config);
     setAuthCookies(
       res,
       { accessToken: result.session.accessToken, refreshToken: result.session.refreshToken },
@@ -282,7 +306,7 @@ export class AuthController {
   @UseGuards(OptionalSessionGuard)
   @ApiOperation({ summary: "Accept an invitation (new-user registration or signed-in member)" })
   async acceptInvitation(
-    @Body() dto: AcceptInvitationDto | AcceptInvitationNewUserDto,
+    @Body() dto: AcceptInvitationRequestDto,
     @Req() req: RequestWithPrincipal,
     @Res({ passthrough: true }) res: Response,
   ) {
@@ -302,12 +326,20 @@ export class AuthController {
       return result;
     }
 
+    if (!dto.firstName?.trim() || !dto.lastName?.trim() || !dto.password) {
+      throw new AuthException(
+        AUTH_ERROR_CODES.INVITATION_INVALID,
+        "First name, last name, and password are required to accept this invitation.",
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
     const created = await this.invitations.acceptAsNewUser(
       dto.token,
       {
-        firstName: (dto as AcceptInvitationNewUserDto).firstName,
-        lastName: (dto as AcceptInvitationNewUserDto).lastName,
-        password: (dto as AcceptInvitationNewUserDto).password,
+        firstName: dto.firstName,
+        lastName: dto.lastName,
+        password: dto.password,
       },
       userAgentOf(req),
       req.requestId,

@@ -36,7 +36,10 @@ export class GoogleService {
     }
   }
 
-  async start(options: { redirectTo?: string; invitationId?: string }): Promise<{ url: string }> {
+  async start(options: { redirectTo?: string; invitationId?: string }): Promise<{
+    url: string;
+    state: string;
+  }> {
     this.requireEnabled();
 
     let invitationId: string | null = null;
@@ -74,12 +77,13 @@ export class GoogleService {
     });
 
     // Defense-in-depth: bind the state to the browser that started the flow.
-    return { url: this.oidc.generateAuthUrl(state, nonce) };
+    return { url: this.oidc.generateAuthUrl(state, nonce), state };
   }
 
   async callback(options: {
     code: string;
     state: string;
+    browserState: string | undefined;
     userAgent: string | undefined;
     requestId?: string;
   }): Promise<{ session: CreatedSession; redirectTo: string }> {
@@ -89,6 +93,14 @@ export class GoogleService {
       throw new AuthException(
         AUTH_ERROR_CODES.OAUTH_STATE_INVALID,
         "Google sign-in failed. Restart the flow.",
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    if (!options.browserState || options.browserState !== options.state) {
+      throw new AuthException(
+        AUTH_ERROR_CODES.OAUTH_STATE_INVALID,
+        "Google sign-in session expired. Restart the flow.",
         HttpStatus.BAD_REQUEST,
       );
     }
@@ -185,6 +197,14 @@ export class GoogleService {
         });
       }
 
+      if (identity.user.status === "SUSPENDED") {
+        throw new AuthException(
+          AUTH_ERROR_CODES.ACCOUNT_SUSPENDED,
+          "This account has been suspended.",
+          HttpStatus.FORBIDDEN,
+        );
+      }
+
       return identity.user;
     }
 
@@ -192,6 +212,14 @@ export class GoogleService {
     const existing = await this.prisma.user.findUnique({ where: { email: normalized } });
 
     if (existing) {
+      if (existing.status === "SUSPENDED") {
+        throw new AuthException(
+          AUTH_ERROR_CODES.ACCOUNT_SUSPENDED,
+          "This account has been suspended.",
+          HttpStatus.FORBIDDEN,
+        );
+      }
+
       await this.prisma.oAuthIdentity.create({
         data: {
           userId: existing.id,
@@ -257,75 +285,100 @@ export class GoogleService {
     googleEmail: string,
     requestId?: string,
   ) {
-    const invitation = await this.prisma.organizationInvitation.findUnique({
-      where: { id: invitationId },
-    });
+    const accepted = await this.prisma.$transaction(async (tx) => {
+      const invitation = await tx.organizationInvitation.findUnique({
+        where: { id: invitationId },
+      });
 
-    if (
-      !invitation ||
-      invitation.revokedAt ||
-      invitation.acceptedAt ||
-      invitation.expiresAt.getTime() < Date.now()
-    ) {
-      throw new AuthException(
-        AUTH_ERROR_CODES.INVITATION_INVALID,
-        "This invitation is no longer valid.",
-        HttpStatus.BAD_REQUEST,
-      );
-    }
+      if (
+        !invitation ||
+        invitation.revokedAt ||
+        invitation.acceptedAt ||
+        invitation.expiresAt.getTime() < Date.now()
+      ) {
+        throw new AuthException(
+          AUTH_ERROR_CODES.INVITATION_INVALID,
+          "This invitation is no longer valid.",
+          HttpStatus.BAD_REQUEST,
+        );
+      }
 
-    if (normalizeEmail(invitation.email) !== googleEmail) {
-      throw new AuthException(
-        AUTH_ERROR_CODES.INVITATION_EMAIL_MISMATCH,
-        "This invitation belongs to a different email address.",
-        HttpStatus.FORBIDDEN,
-      );
-    }
+      if (normalizeEmail(invitation.email) !== googleEmail) {
+        throw new AuthException(
+          AUTH_ERROR_CODES.INVITATION_EMAIL_MISMATCH,
+          "This invitation belongs to a different email address.",
+          HttpStatus.FORBIDDEN,
+        );
+      }
 
-    const conflicting = await this.prisma.organizationMembership.findUnique({
-      where: {
-        organizationId_userId: { organizationId: invitation.organizationId, userId },
-      },
-    });
+      const conflicting = await tx.organizationMembership.findUnique({
+        where: {
+          organizationId_userId: { organizationId: invitation.organizationId, userId },
+        },
+      });
 
-    if (conflicting) {
+      if (conflicting) {
+        if (conflicting.status === "SUSPENDED") {
+          throw new AuthException(
+            AUTH_ERROR_CODES.MEMBERSHIP_SUSPENDED,
+            "Your membership is suspended.",
+            HttpStatus.FORBIDDEN,
+          );
+        }
+
+        const consumed = await tx.organizationInvitation.updateMany({
+          where: { id: invitation.id, acceptedAt: null, revokedAt: null },
+          data: { acceptedAt: new Date() },
+        });
+
+        if (consumed.count !== 1) {
+          throw new AuthException(
+            AUTH_ERROR_CODES.INVITATION_ALREADY_USED,
+            "This invitation has already been used.",
+            HttpStatus.GONE,
+          );
+        }
+
+        return {
+          organizationId: invitation.organizationId,
+          membershipId: conflicting.id,
+          role: conflicting.role,
+        };
+      }
+
+      const consumed = await tx.organizationInvitation.updateMany({
+        where: { id: invitation.id, acceptedAt: null, revokedAt: null },
+        data: { acceptedAt: new Date() },
+      });
+
+      if (consumed.count !== 1) {
+        throw new AuthException(
+          AUTH_ERROR_CODES.INVITATION_ALREADY_USED,
+          "This invitation has already been used.",
+          HttpStatus.GONE,
+        );
+      }
+
+      const membership = await tx.organizationMembership.create({
+        data: { organizationId: invitation.organizationId, userId, role: invitation.role },
+      });
+
       return {
         organizationId: invitation.organizationId,
-        membershipId: conflicting.id,
-        role: conflicting.role,
+        membershipId: membership.id,
+        role: membership.role,
       };
-    }
-
-    const consumed = await this.prisma.organizationInvitation.updateMany({
-      where: { id: invitation.id, acceptedAt: null, revokedAt: null },
-      data: { acceptedAt: new Date() },
-    });
-
-    if (consumed.count !== 1) {
-      throw new AuthException(
-        AUTH_ERROR_CODES.INVITATION_ALREADY_USED,
-        "This invitation has already been used.",
-        HttpStatus.GONE,
-      );
-    }
-
-    const membership = await this.prisma.organizationMembership.create({
-      data: { organizationId: invitation.organizationId, userId, role: invitation.role },
     });
 
     await this.audit.record("INVITATION_ACCEPTED", {
       actorUserId: userId,
       targetUserId: userId,
-      organizationId: invitation.organizationId,
+      organizationId: accepted.organizationId,
       requestId,
-      metadata: { invitationId: invitation.id, via: "google" },
+      metadata: { invitationId, via: "google" },
     });
 
-    return {
-      organizationId: invitation.organizationId,
-      membershipId: membership.id,
-      role: membership.role,
-    };
+    return accepted;
   }
 
   async providers(): Promise<{ google: boolean }> {

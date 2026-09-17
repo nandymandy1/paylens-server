@@ -116,6 +116,19 @@ export class OrganizationService {
 
   async members(principal: RequestPrincipal) {
     const membership = await this.requireActiveMembership(principal);
+
+    if (
+      membership.role !== "TENANT_OWNER" &&
+      membership.role !== "HR_ADMIN" &&
+      membership.role !== "HR_MANAGER"
+    ) {
+      throw new AuthException(
+        AUTH_ERROR_CODES.INSUFFICIENT_PERMISSION,
+        "Your role cannot view organization members.",
+        HttpStatus.FORBIDDEN,
+      );
+    }
+
     const members = await this.prisma.organizationMembership.findMany({
       where: { organizationId: membership.organizationId },
       include: { user: true },
@@ -142,10 +155,10 @@ export class OrganizationService {
   ) {
     const membership = await this.requireActiveMembership(principal);
 
-    if (membership.role !== "TENANT_OWNER" && membership.role !== "HR_ADMIN") {
+    if (membership.role !== "TENANT_OWNER") {
       throw new AuthException(
         AUTH_ERROR_CODES.INSUFFICIENT_PERMISSION,
-        "Your role cannot change member roles.",
+        "Only the tenant owner can change member roles.",
         HttpStatus.FORBIDDEN,
       );
     }
@@ -162,38 +175,13 @@ export class OrganizationService {
       );
     }
 
-    if (target.role === "TENANT_OWNER" && membership.role !== "TENANT_OWNER") {
+    // TENANT_OWNER is immutable in H6: no ownership transfer, no demotion.
+    if (target.role === "TENANT_OWNER" || role === "TENANT_OWNER") {
       throw new AuthException(
         AUTH_ERROR_CODES.INSUFFICIENT_PERMISSION,
-        "Only the tenant owner can change an owner membership.",
+        "The tenant owner role cannot be changed in this phase.",
         HttpStatus.FORBIDDEN,
       );
-    }
-
-    if (role === "TENANT_OWNER" && membership.role !== "TENANT_OWNER") {
-      throw new AuthException(
-        AUTH_ERROR_CODES.INSUFFICIENT_PERMISSION,
-        "Only the tenant owner can grant the owner role.",
-        HttpStatus.FORBIDDEN,
-      );
-    }
-
-    if (target.role === "TENANT_OWNER" && role !== "TENANT_OWNER") {
-      const owners = await this.prisma.organizationMembership.count({
-        where: {
-          organizationId: membership.organizationId,
-          role: "TENANT_OWNER",
-          status: "ACTIVE",
-        },
-      });
-
-      if (owners <= 1) {
-        throw new AuthException(
-          AUTH_ERROR_CODES.INSUFFICIENT_PERMISSION,
-          "An organization must keep at least one active owner.",
-          HttpStatus.CONFLICT,
-        );
-      }
     }
 
     const updated = await this.prisma.organizationMembership.update({

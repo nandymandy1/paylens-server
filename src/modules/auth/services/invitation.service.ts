@@ -179,6 +179,14 @@ export class InvitationService {
       );
     }
 
+    if (user.status === "SUSPENDED") {
+      throw new AuthException(
+        AUTH_ERROR_CODES.ACCOUNT_SUSPENDED,
+        "This account has been suspended.",
+        HttpStatus.FORBIDDEN,
+      );
+    }
+
     const conflicting = await this.prisma.organizationMembership.findUnique({
       where: {
         organizationId_userId: { organizationId: invitation.organizationId, userId: user.id },
@@ -340,8 +348,24 @@ export class InvitationService {
 
   async list(inviter: RequestPrincipal) {
     const membership = await this.requireMembership(inviter);
+
+    if (
+      membership.role !== "TENANT_OWNER" &&
+      membership.role !== "HR_ADMIN" &&
+      membership.role !== "HR_MANAGER"
+    ) {
+      throw new AuthException(
+        AUTH_ERROR_CODES.INSUFFICIENT_PERMISSION,
+        "Your role cannot view organization invitations.",
+        HttpStatus.FORBIDDEN,
+      );
+    }
+
     const invitations = await this.prisma.organizationInvitation.findMany({
-      where: { organizationId: membership.organizationId },
+      where: {
+        organizationId: membership.organizationId,
+        ...(membership.role === "HR_MANAGER" ? { role: "EMPLOYEE" } : {}),
+      },
       orderBy: { createdAt: "desc" },
     });
 

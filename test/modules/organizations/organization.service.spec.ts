@@ -138,7 +138,7 @@ const createHarness = () => {
   const audit = { record: vi.fn(async () => undefined) };
   const service = new OrganizationService(prisma as never, sessions as never, audit as never);
 
-  return { service, prisma, memberships };
+  return { service, prisma, memberships, users };
 };
 
 describe("OrganizationService", () => {
@@ -154,6 +154,78 @@ describe("OrganizationService", () => {
     expect(members[0].email).toBe("owner@acme.example");
   });
 
+  it("lets HR_ADMIN and HR_MANAGER list members", async () => {
+    const { service, memberships, users } = createHarness();
+
+    memberships.push({
+      id: "membership-hrm",
+      userId: "user-hrm",
+      organizationId: "org-1",
+      role: "HR_MANAGER",
+      status: "ACTIVE",
+      createdAt: new Date("2026-01-04"),
+    });
+    users.push({ id: "user-hrm", email: "hrm@acme.example", firstName: "H", lastName: "M" });
+
+    await expect(
+      service.members({
+        userId: "user-admin",
+        sessionId: "session-2",
+        organizationId: "org-1",
+        membershipId: "membership-admin",
+        role: "HR_ADMIN",
+      }),
+    ).resolves.toHaveLength(4);
+    await expect(
+      service.members({
+        userId: "user-hrm",
+        sessionId: "session-3",
+        organizationId: "org-1",
+        membershipId: "membership-hrm",
+        role: "HR_MANAGER",
+      }),
+    ).resolves.toHaveLength(4);
+  });
+
+  it("forbids MANAGER, EMPLOYEE, and VIEWER_AUDITOR from listing members", async () => {
+    const { service, memberships } = createHarness();
+
+    memberships.push(
+      {
+        id: "membership-manager",
+        userId: "user-manager",
+        organizationId: "org-1",
+        role: "MANAGER",
+        status: "ACTIVE",
+        createdAt: new Date("2026-01-04"),
+      },
+      {
+        id: "membership-viewer",
+        userId: "user-viewer",
+        organizationId: "org-1",
+        role: "VIEWER_AUDITOR",
+        status: "ACTIVE",
+        createdAt: new Date("2026-01-05"),
+      },
+    );
+
+    for (const [userId, membershipId, role] of [
+      ["user-manager", "membership-manager", "MANAGER"],
+      ["user-emp", "membership-emp", "EMPLOYEE"],
+      ["user-viewer", "membership-viewer", "VIEWER_AUDITOR"],
+    ] as const) {
+      await expect(
+        service.members({
+          userId,
+          sessionId: "session-x",
+          organizationId: "org-1",
+          membershipId,
+          role,
+        }),
+      ).rejects.toMatchObject({ code: "INSUFFICIENT_PERMISSION" });
+    }
+  });
+
   it("lets the owner change a non-owner role", async () => {
     const { service } = createHarness();
     const updated = await service.changeRole(ownerPrincipal, "membership-emp", "MANAGER");
@@ -161,7 +233,7 @@ describe("OrganizationService", () => {
     expect(updated.role).toBe("MANAGER");
   });
 
-  it("prevents HR_ADMIN from touching owners or granting ownership", async () => {
+  it("forbids HR_ADMIN role changes and owner grant/demotion", async () => {
     const { service } = createHarness();
     const admin: Principal = {
       userId: "user-admin",
@@ -179,17 +251,21 @@ describe("OrganizationService", () => {
         code: "INSUFFICIENT_PERMISSION",
       },
     );
-
-    const updated = await service.changeRole(admin, "membership-emp", "HR_MANAGER");
-
-    expect(updated.role).toBe("HR_MANAGER");
+    await expect(service.changeRole(admin, "membership-emp", "HR_MANAGER")).rejects.toMatchObject({
+      code: "INSUFFICIENT_PERMISSION",
+    });
   });
 
-  it("keeps at least one active owner", async () => {
+  it("keeps the tenant owner role immutable", async () => {
     const { service } = createHarness();
 
     await expect(
       service.changeRole(ownerPrincipal, "membership-owner", "HR_ADMIN"),
+    ).rejects.toMatchObject({
+      code: "INSUFFICIENT_PERMISSION",
+    });
+    await expect(
+      service.changeRole(ownerPrincipal, "membership-emp", "TENANT_OWNER"),
     ).rejects.toMatchObject({
       code: "INSUFFICIENT_PERMISSION",
     });

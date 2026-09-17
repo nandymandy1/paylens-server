@@ -2,6 +2,8 @@ import type { ConfigService } from "@nestjs/config";
 import type { Response } from "express";
 import {
   ACCESS_COOKIE_NAME,
+  OAUTH_STATE_COOKIE_NAME,
+  OAUTH_STATE_TTL_SECONDS,
   REFRESH_COOKIE_NAME,
   SESSION_HINT_COOKIE_NAME,
 } from "@/modules/auth/constants/auth.constants.js";
@@ -80,5 +82,26 @@ export const clearAuthCookies = (res: Response, config: ConfigService): void => 
     sameSite: base.sameSite,
     path: "/",
     ...domain,
+  });
+};
+
+const OAUTH_STATE_COOKIE_PATH = "/api/v1/auth/google";
+
+export const setOAuthStateCookie = (res: Response, state: string, config: ConfigService): void => {
+  res.cookie(OAUTH_STATE_COOKIE_NAME, state, {
+    httpOnly: true,
+    secure: config.getOrThrow<boolean>("app.authCookieSecure"),
+    sameSite: "lax",
+    path: OAUTH_STATE_COOKIE_PATH,
+    maxAge: OAUTH_STATE_TTL_SECONDS * 1000,
+  });
+};
+
+export const clearOAuthStateCookie = (res: Response, config: ConfigService): void => {
+  res.clearCookie(OAUTH_STATE_COOKIE_NAME, {
+    httpOnly: true,
+    secure: config.getOrThrow<boolean>("app.authCookieSecure"),
+    sameSite: "lax",
+    path: OAUTH_STATE_COOKIE_PATH,
   });
 };

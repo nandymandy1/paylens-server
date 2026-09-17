@@ -8,6 +8,8 @@ import type { EmailJob } from "@/modules/email/email.type.js";
 const jobOptions = {
   attempts: 3,
   backoff: { type: "exponential", delay: 2_000 },
+  removeOnComplete: true,
+  removeOnFail: true,
 } as const;
 
 /**

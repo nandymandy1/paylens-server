@@ -8,6 +8,7 @@ import { SessionService } from "@/modules/auth/services/session.service.js";
 class FakeRedis {
   store = new Map<string, string>();
   sets = new Map<string, Set<string>>();
+  ttls = new Map<string, number>();
 
   async get(key: string): Promise<string | null> {
     return this.store.get(key) ?? null;
@@ -17,7 +18,27 @@ class FakeRedis {
     void mode;
     this.store.set(key, value);
 
+    const exIndex = mode.indexOf("EX");
+
+    if (exIndex >= 0) {
+      this.ttls.set(key, Number(mode[exIndex + 1]));
+    }
+
     return "OK";
+  }
+
+  async expire(key: string, seconds: number): Promise<number> {
+    this.ttls.set(key, seconds);
+
+    return 1;
+  }
+
+  async pttl(key: string): Promise<number> {
+    if (!this.store.has(key)) {
+      return -2;
+    }
+
+    return (this.ttls.get(key) ?? 100) * 1000;
   }
 
   async sadd(key: string, member: string): Promise<number> {
@@ -49,6 +70,8 @@ class FakeRedis {
         removed += 1;
       }
 
+      this.ttls.delete(key);
+
       if (this.sets.delete(key)) {
         removed += 1;
       }
@@ -58,24 +81,34 @@ class FakeRedis {
   }
 
   async ttl(cacheKey: string): Promise<number> {
-    void cacheKey;
-
-    return 100;
+    return this.ttls.get(cacheKey) ?? 100;
   }
 
-  /** Mirrors ROTATE_SCRIPT: 1 rotated, 0 missing, -1 hash mismatch. */
+  /**
+   * Mirrors the Lua contracts:
+   * - rotate (3 trailing args): 1 rotated with preserved PTTL, 0 missing/expired, -1 mismatch.
+   * - atomic consume (key only): returns stored value and deletes it.
+   */
   async eval(
     _script: string,
     keyCount: number,
     key: string,
-    expectedHash: string,
-    nextHash: string,
-    now: string,
-    ttl: number,
-  ): Promise<number> {
+    ...args: unknown[]
+  ): Promise<number | string | null> {
     void keyCount;
-    void ttl;
 
+    if (args.length === 0) {
+      const raw = this.store.get(key) ?? null;
+
+      if (raw) {
+        this.store.delete(key);
+        this.ttls.delete(key);
+      }
+
+      return raw;
+    }
+
+    const [expectedHash, nextHash, now] = args as [string, string, string];
     const raw = this.store.get(key);
 
     if (!raw) {
@@ -86,6 +119,12 @@ class FakeRedis {
 
     if (record.refreshTokenHash !== expectedHash) {
       return -1;
+    }
+
+    const ttlMs = await this.pttl(key);
+
+    if (ttlMs <= 0) {
+      return 0;
     }
 
     this.store.set(
@@ -186,5 +225,51 @@ describe("SessionService", () => {
     const stored = JSON.parse(redis.store.get(`auth:session:${created.sessionId}`) as string);
 
     expect(stored.userAgentHash).toBe(createHash("sha256").update("TestAgent/1.0").digest("hex"));
+  });
+
+  it("expires the user-sessions index with the session lifetime", async () => {
+    const created = await service.createSession({ userId: "user-1" });
+
+    expect(redis.ttls.get("auth:user-sessions:user-1")).toBe(1_209_600);
+    expect(redis.ttls.get(`auth:session:${created.sessionId}`)).toBe(1_209_600);
+  });
+
+  it("refreshes without extending the absolute session lifetime", async () => {
+    const created = await service.createSession({ userId: "user-1" });
+    const [sessionId, secret] = created.refreshToken.split(".");
+
+    redis.ttls.set(`auth:session:${sessionId}`, 60);
+
+    const rotated = await service.refresh(sessionId, secret);
+
+    expect(rotated.refreshToken).not.toBe(created.refreshToken);
+    expect(redis.ttls.get(`auth:session:${sessionId}`)).toBe(60);
+  });
+
+  it("rejects refresh once the absolute lifetime has expired", async () => {
+    const created = await service.createSession({ userId: "user-1" });
+    const [sessionId, secret] = created.refreshToken.split(".");
+
+    redis.store.delete(`auth:session:${sessionId}`);
+    redis.ttls.delete(`auth:session:${sessionId}`);
+
+    await expect(service.refresh(sessionId, secret)).rejects.toMatchObject({
+      code: "REFRESH_TOKEN_INVALID",
+    });
+  });
+
+  it("consumes OAuth state atomically exactly once", async () => {
+    await service.saveOAuthState("state-1", {
+      nonce: "nonce-1",
+      redirectTo: "/dashboard",
+      invitationId: null,
+      createdAt: new Date().toISOString(),
+    });
+
+    const first = await service.consumeOAuthState("state-1");
+    const second = await service.consumeOAuthState("state-1");
+
+    expect(first?.nonce).toBe("nonce-1");
+    expect(second).toBeNull();
   });
 });
