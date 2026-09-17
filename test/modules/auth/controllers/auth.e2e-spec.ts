@@ -9,6 +9,10 @@ import { EMAIL_QUEUE } from "@/modules/email/email.constants.js";
 import type { EmailJob } from "@/modules/email/email.type.js";
 
 // Runs only against an explicitly supplied external Redis; never provisions one via Docker.
+//
+// Throttle budget note: this suite issues ~9 logins against the login route's
+// limit of 10/min (plus small counts on the other strict routes). Adding more
+// login calls here requires raising coverage elsewhere or splitting the file.
 describe.runIf(process.env.AUTH_E2E_REDIS_URL)("Authentication flows (e2e)", () => {
   let app: INestApplication;
   let postgres: StartedTestContainer;
@@ -285,7 +289,7 @@ describe.runIf(process.env.AUTH_E2E_REDIS_URL)("Authentication flows (e2e)", () 
       .send({ email: "owner@acme.example", password: "another correct horse battery" })
       .expect(200);
 
-    // HR_ADMIN cannot be created by nobody: owner invites one first.
+    // Only the tenant owner can mint the first HR_ADMIN: invite one first.
     const invite = await owner
       .post("/api/v1/organizations/current/invitations")
       .send({ email: "admin@acme.example", role: "HR_ADMIN" })

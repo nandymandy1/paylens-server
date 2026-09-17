@@ -32,6 +32,13 @@ const buildEmail = (job: EmailJob): BuiltEmail => {
         html: `<p>You have been invited to join <strong>${job.organizationName}</strong> as <strong>${job.role}</strong>.</p><p><a href="${job.invitationUrl}">Accept invitation</a></p><p>This invitation expires in 7 days.</p>`,
         url: job.invitationUrl,
       };
+    default: {
+      // Malformed payloads fail explicitly (and retry) rather than throwing an
+      // obscure TypeError downstream. Only the job type is logged — never the payload.
+      const unexpected = (job as { type?: unknown }).type;
+
+      throw new Error(`Unsupported email job type: ${String(unexpected)}`);
+    }
   }
 };
 

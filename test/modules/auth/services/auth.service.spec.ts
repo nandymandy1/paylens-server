@@ -307,6 +307,36 @@ describe("AuthService credentials", () => {
     });
   });
 
+  it("rotates verification tokens on resend and stays silent for unknown emails", async () => {
+    const { service, email } = context;
+
+    await service.register(validRegistration);
+
+    const firstToken = tokenFromLink(email.sendVerificationEmail.mock.calls[0][1]);
+
+    await service.resendVerification("hr@acme.example");
+
+    expect(email.sendVerificationEmail).toHaveBeenCalledTimes(2);
+
+    const secondToken = tokenFromLink(email.sendVerificationEmail.mock.calls[1][1]);
+
+    expect(secondToken).not.toBe(firstToken);
+
+    // The resend revoked the prior token.
+    await expect(service.verifyEmail(firstToken, undefined)).rejects.toMatchObject({
+      code: "EMAIL_VERIFICATION_TOKEN_INVALID",
+    });
+
+    const verified = await service.verifyEmail(secondToken, undefined);
+
+    expect(verified.user.emailVerified).toBe(true);
+
+    // Unknown or already-verified emails produce no new mail and no error.
+    await service.resendVerification("ghost@example.com");
+    await service.resendVerification("hr@acme.example");
+    expect(email.sendVerificationEmail).toHaveBeenCalledTimes(2);
+  });
+
   it("logs in with valid credentials and rejects wrong password generically", async () => {
     const { service, email } = context;
 

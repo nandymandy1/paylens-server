@@ -117,6 +117,16 @@ describe("EmailProcessor", () => {
     expect(logged.join("\n")).not.toContain("http://x/reset?token=secret");
   });
 
+  it("rejects malformed job payloads without logging them", async () => {
+    const { processor, logger } = createProcessor(baseConfig({}));
+
+    await expect(
+      processor.process({ name: "bogus", data: { type: "BOGUS", to: "x@y.z" } } as never),
+    ).rejects.toThrow("Unsupported email job type: BOGUS");
+
+    expect(logger.info).not.toHaveBeenCalled();
+  });
+
   it("creates no transporter without SMTP config", () => {
     const { processor } = createProcessor(baseConfig({}));
 
