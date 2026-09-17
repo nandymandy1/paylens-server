@@ -12,14 +12,6 @@ export type ValidatedEnvironment = {
   EXECUTION_TRACE_ENABLED: boolean;
   THROTTLE_TTL_MS: number;
   THROTTLE_LIMIT: number;
-  THROTTLE_LOGIN_LIMIT: number;
-  THROTTLE_REGISTER_LIMIT: number;
-  THROTTLE_FORGOT_LIMIT: number;
-  THROTTLE_RESEND_LIMIT: number;
-  THROTTLE_RESET_LIMIT: number;
-  THROTTLE_INVITE_LIMIT: number;
-  THROTTLE_GOOGLE_LIMIT: number;
-  THROTTLE_REFRESH_LIMIT: number;
   FRONTEND_URL: string;
   AUTH_ACCESS_TOKEN_SECRET: string;
   AUTH_ACCESS_TTL_SECONDS: number;
@@ -239,62 +231,6 @@ export const validateEnvironment = (raw: Record<string, unknown>): ValidatedEnvi
   );
   const throttleTtl = validateInteger(raw.THROTTLE_TTL_MS, 60_000, "THROTTLE_TTL_MS", 1, 3_600_000);
   const throttleLimit = validateInteger(raw.THROTTLE_LIMIT, 100, "THROTTLE_LIMIT", 1, 10_000);
-  const throttleLoginLimit = validateInteger(
-    raw.THROTTLE_LOGIN_LIMIT,
-    10,
-    "THROTTLE_LOGIN_LIMIT",
-    1,
-    10_000,
-  );
-  const throttleRegisterLimit = validateInteger(
-    raw.THROTTLE_REGISTER_LIMIT,
-    5,
-    "THROTTLE_REGISTER_LIMIT",
-    1,
-    10_000,
-  );
-  const throttleForgotLimit = validateInteger(
-    raw.THROTTLE_FORGOT_LIMIT,
-    5,
-    "THROTTLE_FORGOT_LIMIT",
-    1,
-    10_000,
-  );
-  const throttleResendLimit = validateInteger(
-    raw.THROTTLE_RESEND_LIMIT,
-    5,
-    "THROTTLE_RESEND_LIMIT",
-    1,
-    10_000,
-  );
-  const throttleResetLimit = validateInteger(
-    raw.THROTTLE_RESET_LIMIT,
-    10,
-    "THROTTLE_RESET_LIMIT",
-    1,
-    10_000,
-  );
-  const throttleInviteLimit = validateInteger(
-    raw.THROTTLE_INVITE_LIMIT,
-    10,
-    "THROTTLE_INVITE_LIMIT",
-    1,
-    10_000,
-  );
-  const throttleGoogleLimit = validateInteger(
-    raw.THROTTLE_GOOGLE_LIMIT,
-    20,
-    "THROTTLE_GOOGLE_LIMIT",
-    1,
-    10_000,
-  );
-  const throttleRefreshLimit = validateInteger(
-    raw.THROTTLE_REFRESH_LIMIT,
-    30,
-    "THROTTLE_REFRESH_LIMIT",
-    1,
-    10_000,
-  );
   const frontendUrl = validateOptionalUrl(
     raw.FRONTEND_URL,
     "FRONTEND_URL",
@@ -348,14 +284,6 @@ export const validateEnvironment = (raw: Record<string, unknown>): ValidatedEnvi
     DATABASE_URL: databaseUrl,
     THROTTLE_TTL_MS: throttleTtl,
     THROTTLE_LIMIT: throttleLimit,
-    THROTTLE_LOGIN_LIMIT: throttleLoginLimit,
-    THROTTLE_REGISTER_LIMIT: throttleRegisterLimit,
-    THROTTLE_FORGOT_LIMIT: throttleForgotLimit,
-    THROTTLE_RESEND_LIMIT: throttleResendLimit,
-    THROTTLE_RESET_LIMIT: throttleResetLimit,
-    THROTTLE_INVITE_LIMIT: throttleInviteLimit,
-    THROTTLE_GOOGLE_LIMIT: throttleGoogleLimit,
-    THROTTLE_REFRESH_LIMIT: throttleRefreshLimit,
     EXECUTION_TRACE_ENABLED: executionTraceEnabled,
     FRONTEND_URL: frontendUrl,
     AUTH_ACCESS_TOKEN_SECRET: authAccessTokenSecret,

@@ -70,15 +70,6 @@ describe.runIf(process.env.AUTH_E2E_REDIS_URL)("Authentication flows (e2e)", () 
     process.env.CORS_ORIGINS = "http://localhost:3000";
     process.env.FRONTEND_URL = "http://localhost:3000";
     process.env.EXECUTION_TRACE_ENABLED = "true";
-    // Generous per-policy limits: the suite exercises flows, not the limiter itself.
-    process.env.THROTTLE_LOGIN_LIMIT = "1000";
-    process.env.THROTTLE_REGISTER_LIMIT = "1000";
-    process.env.THROTTLE_FORGOT_LIMIT = "1000";
-    process.env.THROTTLE_RESEND_LIMIT = "1000";
-    process.env.THROTTLE_RESET_LIMIT = "1000";
-    process.env.THROTTLE_INVITE_LIMIT = "1000";
-    process.env.THROTTLE_GOOGLE_LIMIT = "1000";
-    process.env.THROTTLE_REFRESH_LIMIT = "1000";
 
     execSync("npx prisma migrate deploy", {
       cwd: new URL("../../../..", import.meta.url).pathname,

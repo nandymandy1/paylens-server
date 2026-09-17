@@ -113,6 +113,7 @@ export class InvitationService {
     const invitation = await this.findValidInvitation(rawToken);
 
     return {
+      id: invitation.id,
       organization: { id: invitation.organization.id, name: invitation.organization.name },
       email: invitation.email,
       role: invitation.role,

@@ -36,55 +36,12 @@ import { RedisModule } from "@/redis/redis.module.js";
     ThrottlerModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        throttlers: [
-          {
-            name: "default",
-            ttl: config.getOrThrow<number>("app.throttleTtlMs"),
-            limit: config.getOrThrow<number>("app.throttleLimit"),
-          },
-          {
-            name: "login",
-            ttl: 60_000,
-            limit: config.getOrThrow<number>("app.throttleLoginLimit"),
-          },
-          {
-            name: "register",
-            ttl: 60_000,
-            limit: config.getOrThrow<number>("app.throttleRegisterLimit"),
-          },
-          {
-            name: "forgot",
-            ttl: 60_000,
-            limit: config.getOrThrow<number>("app.throttleForgotLimit"),
-          },
-          {
-            name: "resend",
-            ttl: 60_000,
-            limit: config.getOrThrow<number>("app.throttleResendLimit"),
-          },
-          {
-            name: "reset",
-            ttl: 60_000,
-            limit: config.getOrThrow<number>("app.throttleResetLimit"),
-          },
-          {
-            name: "invite",
-            ttl: 60_000,
-            limit: config.getOrThrow<number>("app.throttleInviteLimit"),
-          },
-          {
-            name: "google",
-            ttl: 60_000,
-            limit: config.getOrThrow<number>("app.throttleGoogleLimit"),
-          },
-          {
-            name: "refresh",
-            ttl: 60_000,
-            limit: config.getOrThrow<number>("app.throttleRefreshLimit"),
-          },
-        ],
-      }),
+      useFactory: (config: ConfigService) => [
+        {
+          ttl: config.getOrThrow<number>("app.throttleTtlMs"),
+          limit: config.getOrThrow<number>("app.throttleLimit"),
+        },
+      ],
     }),
     DatabaseModule,
     RedisModule,

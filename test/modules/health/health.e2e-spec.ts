@@ -66,7 +66,8 @@ describe("Health endpoints (e2e)", () => {
   it("never throttles health/readiness probes", async () => {
     for (let attempt = 0; attempt < 10; attempt += 1) {
       await request(app.getHttpServer()).get("/health").expect(200);
-      await request(app.getHttpServer()).get("/ready").expect(200);
+      // Redis is down here: readiness correctly reports 503, never 429.
+      await request(app.getHttpServer()).get("/ready").expect(503);
     }
   });
 });
