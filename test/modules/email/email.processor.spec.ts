@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { EmailProcessor } from "@/modules/email/email.processor.js";
+import { buildEmail, EmailProcessor } from "@/modules/email/email.processor.js";
 
 const baseConfig = (overrides: Record<string, unknown> = {}) =>
   ({
@@ -131,5 +131,20 @@ describe("EmailProcessor", () => {
     const { processor } = createProcessor(baseConfig({}));
 
     expect((processor as unknown as { transporter: unknown }).transporter).toBeNull();
+  });
+
+  it("escapes user-controlled organization names in invitation HTML", () => {
+    const built = buildEmail({
+      type: "ORGANIZATION_INVITATION",
+      to: "new@acme.example",
+      invitationUrl: "http://localhost:3000/invite/accept?token=test",
+      organizationName: 'ACME <script>alert("x")</script> & Sons',
+      role: "EMPLOYEE",
+    });
+
+    expect(built.html).not.toContain("<script>");
+    expect(built.html).toContain(
+      "ACME &lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt; &amp; Sons",
+    );
   });
 });

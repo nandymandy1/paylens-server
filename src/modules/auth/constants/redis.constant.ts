@@ -27,3 +27,23 @@ if value then
 end
 return value
 `;
+
+export const SWITCH_ORGANIZATION_SCRIPT = `
+local data = redis.call("GET", KEYS[1])
+if not data then
+  return false
+end
+local ttl = redis.call("PTTL", KEYS[1])
+if ttl <= 0 then
+  return false
+end
+local ok, record = pcall(cjson.decode, data)
+if not ok then
+  return false
+end
+record.activeOrganizationId = ARGV[1] == "__PAYLENS_NULL__" and cjson.null or ARGV[1]
+record.activeMembershipId = ARGV[2] == "__PAYLENS_NULL__" and cjson.null or ARGV[2]
+record.role = ARGV[3] == "__PAYLENS_NULL__" and cjson.null or ARGV[3]
+redis.call("SET", KEYS[1], cjson.encode(record), "PX", ttl)
+return cjson.encode(record)
+`;

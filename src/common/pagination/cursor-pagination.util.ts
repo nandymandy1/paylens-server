@@ -12,7 +12,10 @@ import type {
 const base64UrlPattern = /^[A-Za-z0-9_-]+$/;
 
 const invalidCursor = (): BadRequestException =>
-  new BadRequestException({ code: "INVALID_CURSOR", message: "Invalid cursor." });
+  new BadRequestException({
+    code: "INVALID_CURSOR",
+    message: "Invalid cursor.",
+  });
 
 const invalidLimit = (): BadRequestException =>
   new BadRequestException({

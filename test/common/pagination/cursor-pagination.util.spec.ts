@@ -30,7 +30,11 @@ describe("cursor pagination", () => {
     expect(decodeCursor(cursor, isExampleCursor)).toEqual(payload);
   });
 
-  it.each(["%%%", "not-json", encodeCursor({ v: 2, data: { id: "a" } })])(
+  const unsupportedVersion = Buffer.from(
+    JSON.stringify({ v: 2, data: { id: "a", value: "b" } }),
+  ).toString("base64url");
+
+  it.each(["%%%", "not-json", unsupportedVersion])(
     "rejects malformed or unsupported cursors",
     (cursor) => {
       expect(() => decodeCursor(cursor, isExampleCursor)).toThrow(BadRequestException);

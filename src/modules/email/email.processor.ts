@@ -12,7 +12,15 @@ type BuiltEmail = {
   url: string;
 };
 
-const buildEmail = (job: EmailJob): BuiltEmail => {
+export const escapeHtml = (value: string): string =>
+  value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+
+export const buildEmail = (job: EmailJob): BuiltEmail => {
   switch (job.type) {
     case "VERIFY_EMAIL":
       return {
@@ -29,7 +37,7 @@ const buildEmail = (job: EmailJob): BuiltEmail => {
     case "ORGANIZATION_INVITATION":
       return {
         subject: `You are invited to join ${job.organizationName} on PayLens`,
-        html: `<p>You have been invited to join <strong>${job.organizationName}</strong> as <strong>${job.role}</strong>.</p><p><a href="${job.invitationUrl}">Accept invitation</a></p><p>This invitation expires in 7 days.</p>`,
+        html: `<p>You have been invited to join <strong>${escapeHtml(job.organizationName)}</strong> as <strong>${job.role}</strong>.</p><p><a href="${job.invitationUrl}">Accept invitation</a></p><p>This invitation expires in 7 days.</p>`,
         url: job.invitationUrl,
       };
     default: {

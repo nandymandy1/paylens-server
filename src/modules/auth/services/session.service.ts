@@ -21,6 +21,7 @@ import {
 import {
   ROTATE_SCRIPT,
   CONSUME_OAUTH_STATE_SCRIPT,
+  SWITCH_ORGANIZATION_SCRIPT,
 } from "@/modules/auth/constants/redis.constant.js";
 
 export type CreatedSession = {
@@ -171,28 +172,22 @@ export class SessionService {
       role: MembershipRoleName | null;
     },
   ): Promise<SessionRecord | null> {
-    const record = await this.getSession(sessionId);
-
-    if (!record) {
-      return null;
-    }
-
-    const updated: SessionRecord = {
-      ...record,
-      activeOrganizationId: active.organizationId,
-      activeMembershipId: active.membershipId,
-      role: active.role,
-    };
-    const ttl = await this.redis.ttl(sessionKey(sessionId));
-
-    await this.redis.set(
+    const updated = await this.redis.eval(
+      SWITCH_ORGANIZATION_SCRIPT,
+      1,
       sessionKey(sessionId),
-      JSON.stringify(updated),
-      "EX",
-      ttl > 0 ? ttl : this.refreshTtlSeconds,
+      active.organizationId ?? "__PAYLENS_NULL__",
+      active.membershipId ?? "__PAYLENS_NULL__",
+      active.role ?? "__PAYLENS_NULL__",
     );
 
-    return updated;
+    if (typeof updated !== "string") return null;
+
+    try {
+      return JSON.parse(updated) as SessionRecord;
+    } catch {
+      return null;
+    }
   }
 
   async revokeSession(sessionId: string): Promise<void> {

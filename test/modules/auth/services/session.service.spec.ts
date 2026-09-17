@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 import { JwtService } from "@nestjs/jwt";
 import { beforeEach, describe, expect, it } from "vitest";
+import {
+  CONSUME_OAUTH_STATE_SCRIPT,
+  ROTATE_SCRIPT,
+  SWITCH_ORGANIZATION_SCRIPT,
+} from "@/modules/auth/constants/redis.constant.js";
 import { hashOpaqueToken } from "@/modules/auth/utils/auth.utils.js";
 import { SessionService } from "@/modules/auth/services/session.service.js";
 
@@ -84,20 +89,15 @@ class FakeRedis {
     return this.ttls.get(cacheKey) ?? 100;
   }
 
-  /**
-   * Mirrors the Lua contracts:
-   * - rotate (3 trailing args): 1 rotated with preserved PTTL, 0 missing/expired, -1 mismatch.
-   * - atomic consume (key only): returns stored value and deletes it.
-   */
   async eval(
-    _script: string,
+    script: string,
     keyCount: number,
     key: string,
     ...args: unknown[]
   ): Promise<number | string | null> {
     void keyCount;
 
-    if (args.length === 0) {
+    if (script === CONSUME_OAUTH_STATE_SCRIPT) {
       const raw = this.store.get(key) ?? null;
 
       if (raw) {
@@ -108,31 +108,71 @@ class FakeRedis {
       return raw;
     }
 
-    const [expectedHash, nextHash, now] = args as [string, string, string];
-    const raw = this.store.get(key);
+    if (script === ROTATE_SCRIPT) {
+      const [expectedHash, nextHash, now] = args as [string, string, string];
+      const raw = this.store.get(key);
 
-    if (!raw) {
-      return 0;
+      if (!raw) {
+        return 0;
+      }
+
+      const ttlMs = await this.pttl(key);
+
+      if (ttlMs <= 0) {
+        return 0;
+      }
+
+      const record = JSON.parse(raw) as {
+        refreshTokenHash: string;
+        [key: string]: unknown;
+      };
+
+      if (record.refreshTokenHash !== expectedHash) {
+        return -1;
+      }
+
+      this.store.set(
+        key,
+        JSON.stringify({
+          ...record,
+          refreshTokenHash: nextHash,
+          lastRefreshedAt: now,
+        }),
+      );
+
+      return 1;
     }
 
-    const record = JSON.parse(raw) as { refreshTokenHash: string };
+    if (script === SWITCH_ORGANIZATION_SCRIPT) {
+      const [organizationId, membershipId, role] = args as [string, string, string];
+      const raw = this.store.get(key);
 
-    if (record.refreshTokenHash !== expectedHash) {
-      return -1;
+      if (!raw) {
+        return null;
+      }
+
+      const ttlMs = await this.pttl(key);
+
+      if (ttlMs <= 0) {
+        return null;
+      }
+
+      const record = JSON.parse(raw) as Record<string, unknown>;
+      const decodeNullable = (input: string): string | null =>
+        input === "__PAYLENS_NULL__" ? null : input;
+      const encoded = JSON.stringify({
+        ...record,
+        activeOrganizationId: decodeNullable(organizationId),
+        activeMembershipId: decodeNullable(membershipId),
+        role: decodeNullable(role),
+      });
+
+      this.store.set(key, encoded);
+
+      return encoded;
     }
 
-    const ttlMs = await this.pttl(key);
-
-    if (ttlMs <= 0) {
-      return 0;
-    }
-
-    this.store.set(
-      key,
-      JSON.stringify({ ...JSON.parse(raw), refreshTokenHash: nextHash, lastRefreshedAt: now }),
-    );
-
-    return 1;
+    throw new Error("FakeRedis received an unsupported Lua script");
   }
 }
 
@@ -244,6 +284,78 @@ describe("SessionService", () => {
 
     expect(rotated.refreshToken).not.toBe(created.refreshToken);
     expect(redis.ttls.get(`auth:session:${sessionId}`)).toBe(60);
+  });
+
+  it("switches organization without replacing the current refresh hash or extending TTL", async () => {
+    const created = await service.createSession({
+      userId: "user-1",
+      activeOrganizationId: "org-1",
+      activeMembershipId: "membership-1",
+      role: "TENANT_OWNER",
+    });
+    const sessionKey = `auth:session:${created.sessionId}`;
+    const before = JSON.parse(redis.store.get(sessionKey) as string);
+
+    redis.ttls.set(sessionKey, 60);
+
+    const updated = await service.setActiveOrganization(created.sessionId, {
+      organizationId: "org-2",
+      membershipId: "membership-2",
+      role: "HR_ADMIN",
+    });
+    const after = JSON.parse(redis.store.get(sessionKey) as string);
+
+    expect(updated).toMatchObject({
+      activeOrganizationId: "org-2",
+      activeMembershipId: "membership-2",
+      role: "HR_ADMIN",
+    });
+    expect(after.refreshTokenHash).toBe(before.refreshTokenHash);
+    expect(redis.ttls.get(sessionKey)).toBe(60);
+  });
+
+  it("does not recreate an expired session during organization switching", async () => {
+    const created = await service.createSession({ userId: "user-1" });
+    const key = `auth:session:${created.sessionId}`;
+
+    redis.store.delete(key);
+    redis.ttls.delete(key);
+
+    await expect(
+      service.setActiveOrganization(created.sessionId, {
+        organizationId: "org-2",
+        membershipId: "membership-2",
+        role: "HR_ADMIN",
+      }),
+    ).resolves.toBeNull();
+
+    expect(redis.store.has(key)).toBe(false);
+  });
+
+  it("keeps refresh rotation valid across an organization switch", async () => {
+    const created = await service.createSession({
+      userId: "user-1",
+      activeOrganizationId: "org-1",
+      activeMembershipId: "membership-1",
+      role: "TENANT_OWNER",
+    });
+    const [sessionId, originalSecret] = created.refreshToken.split(".");
+    const firstRotation = await service.refresh(sessionId, originalSecret);
+
+    await service.setActiveOrganization(sessionId, {
+      organizationId: "org-2",
+      membershipId: "membership-2",
+      role: "HR_ADMIN",
+    });
+
+    const secondRotation = await service.refresh(
+      sessionId,
+      firstRotation.refreshToken.split(".")[1],
+    );
+
+    expect(secondRotation.record.activeOrganizationId).toBe("org-2");
+    expect(secondRotation.record.activeMembershipId).toBe("membership-2");
+    expect(secondRotation.record.role).toBe("HR_ADMIN");
   });
 
   it("rejects refresh once the absolute lifetime has expired", async () => {

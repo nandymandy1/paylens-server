@@ -3,10 +3,14 @@ import type { INestApplication } from "@nestjs/common";
 import { getQueueToken } from "@nestjs/bullmq";
 import type { Queue } from "bullmq";
 import { GenericContainer, type StartedTestContainer } from "testcontainers";
-import request from "supertest";
+import request, { type Test } from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { EMAIL_QUEUE } from "@/modules/email/email.constants.js";
 import type { EmailJob } from "@/modules/email/email.type.js";
+
+const FRONTEND_ORIGIN = "http://localhost:3000";
+
+const withFrontendOrigin = (test: Test): Test => test.set("Origin", FRONTEND_ORIGIN);
 
 // Runs only against an explicitly supplied external Redis; never provisions one via Docker.
 //
@@ -100,8 +104,7 @@ describe.runIf(process.env.AUTH_E2E_REDIS_URL)("Authentication flows (e2e)", () 
   });
 
   it("registers, verifies once, and rejects verification replay", async () => {
-    await request(app.getHttpServer())
-      .post("/api/v1/auth/register")
+    await withFrontendOrigin(request(app.getHttpServer()).post("/api/v1/auth/register"))
       .send({
         organizationName: "Acme Industries",
         firstName: "Asha",
@@ -117,8 +120,7 @@ describe.runIf(process.env.AUTH_E2E_REDIS_URL)("Authentication flows (e2e)", () 
       });
 
     // Correct password but unverified email stays locked out with a stable code.
-    await request(app.getHttpServer())
-      .post("/api/v1/auth/login")
+    await withFrontendOrigin(request(app.getHttpServer()).post("/api/v1/auth/login"))
       .send({ email: "owner@acme.example", password: "correct horse battery staple" })
       .expect(403)
       .expect(({ body }) => {
@@ -128,10 +130,9 @@ describe.runIf(process.env.AUTH_E2E_REDIS_URL)("Authentication flows (e2e)", () 
     const token = await verificationTokenFor("owner@acme.example");
     const agent = request.agent(app.getHttpServer());
 
-    await agent.post("/api/v1/auth/verify-email").send({ token }).expect(200);
+    await withFrontendOrigin(agent.post("/api/v1/auth/verify-email")).send({ token }).expect(200);
 
-    await request(app.getHttpServer())
-      .post("/api/v1/auth/verify-email")
+    await withFrontendOrigin(request(app.getHttpServer()).post("/api/v1/auth/verify-email"))
       .send({ token })
       .expect(400)
       .expect(({ body }) => {
@@ -142,8 +143,7 @@ describe.runIf(process.env.AUTH_E2E_REDIS_URL)("Authentication flows (e2e)", () 
   it("logs in, bootstraps /me, and enforces tenant isolation", async () => {
     const agent = request.agent(app.getHttpServer());
 
-    await agent
-      .post("/api/v1/auth/login")
+    await withFrontendOrigin(agent.post("/api/v1/auth/login"))
       .send({ email: "owner@acme.example", password: "correct horse battery staple" })
       .expect(200)
       .expect(({ body }) => {
@@ -160,8 +160,7 @@ describe.runIf(process.env.AUTH_E2E_REDIS_URL)("Authentication flows (e2e)", () 
     expect(members.body.data).toHaveLength(1);
 
     // A second tenant cannot touch the first one.
-    await request(app.getHttpServer())
-      .post("/api/v1/auth/register")
+    await withFrontendOrigin(request(app.getHttpServer()).post("/api/v1/auth/register"))
       .send({
         organizationName: "Rival Corp",
         firstName: "Ravi",
@@ -174,9 +173,10 @@ describe.runIf(process.env.AUTH_E2E_REDIS_URL)("Authentication flows (e2e)", () 
     const rivalToken = await verificationTokenFor("rival@example.com");
     const rival = request.agent(app.getHttpServer());
 
-    await rival.post("/api/v1/auth/verify-email").send({ token: rivalToken }).expect(200);
-    await rival
-      .post("/api/v1/auth/switch-organization")
+    await withFrontendOrigin(rival.post("/api/v1/auth/verify-email"))
+      .send({ token: rivalToken })
+      .expect(200);
+    await withFrontendOrigin(rival.post("/api/v1/auth/switch-organization"))
       .send({ organizationId: me.body.data.activeOrganization.id })
       .expect(403)
       .expect(({ body }) => {
@@ -185,16 +185,16 @@ describe.runIf(process.env.AUTH_E2E_REDIS_URL)("Authentication flows (e2e)", () 
   });
 
   it("rotates refresh tokens and revokes the session on reuse", async () => {
-    const login = await request(app.getHttpServer())
-      .post("/api/v1/auth/login")
+    const login = await withFrontendOrigin(request(app.getHttpServer()).post("/api/v1/auth/login"))
       .send({ email: "owner@acme.example", password: "correct horse battery staple" })
       .expect(200);
 
     const issued = login.headers["set-cookie"] as unknown as string[];
     const issuedRefresh = issued.find((cookie) => cookie.startsWith("paylens_rt=")) as string;
 
-    const rotated = await request(app.getHttpServer())
-      .post("/api/v1/auth/refresh")
+    const rotated = await withFrontendOrigin(
+      request(app.getHttpServer()).post("/api/v1/auth/refresh"),
+    )
       .set("Cookie", issued)
       .expect(200)
       .expect(({ body }) => {
@@ -211,8 +211,7 @@ describe.runIf(process.env.AUTH_E2E_REDIS_URL)("Authentication flows (e2e)", () 
     );
 
     // Replay the pre-rotation refresh secret: possible replay → session revoked.
-    await request(app.getHttpServer())
-      .post("/api/v1/auth/refresh")
+    await withFrontendOrigin(request(app.getHttpServer()).post("/api/v1/auth/refresh"))
       .set("Cookie", [issuedRefresh])
       .expect(200)
       .expect(({ body }) => {
@@ -231,13 +230,11 @@ describe.runIf(process.env.AUTH_E2E_REDIS_URL)("Authentication flows (e2e)", () 
   it("resets passwords with single-use tokens and revokes every session", async () => {
     const agent = request.agent(app.getHttpServer());
 
-    await agent
-      .post("/api/v1/auth/login")
+    await withFrontendOrigin(agent.post("/api/v1/auth/login"))
       .send({ email: "owner@acme.example", password: "correct horse battery staple" })
       .expect(200);
 
-    await request(app.getHttpServer())
-      .post("/api/v1/auth/forgot-password")
+    await withFrontendOrigin(request(app.getHttpServer()).post("/api/v1/auth/forgot-password"))
       .send({ email: "owner@acme.example" })
       .expect(200)
       .expect(({ body }) => {
@@ -245,8 +242,9 @@ describe.runIf(process.env.AUTH_E2E_REDIS_URL)("Authentication flows (e2e)", () 
       });
 
     // Unknown emails receive the identical response (no enumeration oracle).
-    const unknown = await request(app.getHttpServer())
-      .post("/api/v1/auth/forgot-password")
+    const unknown = await withFrontendOrigin(
+      request(app.getHttpServer()).post("/api/v1/auth/forgot-password"),
+    )
       .send({ email: "ghost@example.com" })
       .expect(200);
 
@@ -254,13 +252,11 @@ describe.runIf(process.env.AUTH_E2E_REDIS_URL)("Authentication flows (e2e)", () 
 
     const token = await resetTokenFor("owner@acme.example");
 
-    await request(app.getHttpServer())
-      .post("/api/v1/auth/reset-password")
+    await withFrontendOrigin(request(app.getHttpServer()).post("/api/v1/auth/reset-password"))
       .send({ token, password: "another correct horse battery" })
       .expect(200);
 
-    await request(app.getHttpServer())
-      .post("/api/v1/auth/reset-password")
+    await withFrontendOrigin(request(app.getHttpServer()).post("/api/v1/auth/reset-password"))
       .send({ token, password: "another correct horse battery" })
       .expect(400)
       .expect(({ body }) => {
@@ -270,28 +266,43 @@ describe.runIf(process.env.AUTH_E2E_REDIS_URL)("Authentication flows (e2e)", () 
     // Password reset revoked every session: the pre-reset access cookie is dead.
     await agent.get("/api/v1/auth/me").expect(401);
 
-    await request(app.getHttpServer())
-      .post("/api/v1/auth/login")
+    await withFrontendOrigin(request(app.getHttpServer()).post("/api/v1/auth/login"))
       .send({ email: "owner@acme.example", password: "correct horse battery staple" })
       .expect(401);
 
-    await request(app.getHttpServer())
-      .post("/api/v1/auth/login")
+    await withFrontendOrigin(request(app.getHttpServer()).post("/api/v1/auth/login"))
       .send({ email: "owner@acme.example", password: "another correct horse battery" })
+      .expect(200);
+  });
+
+  it("rejects authenticated unsafe requests without a browser Origin", async () => {
+    const login = await withFrontendOrigin(request(app.getHttpServer()).post("/api/v1/auth/login"))
+      .send({ email: "owner@acme.example", password: "another correct horse battery" })
+      .expect(200);
+    const cookies = login.headers["set-cookie"] as unknown as string[];
+
+    await request(app.getHttpServer())
+      .post("/api/v1/auth/logout")
+      .set("Cookie", cookies)
+      .expect(403)
+      .expect(({ body }) => {
+        expect(body.code).toBe("CSRF_ORIGIN_FORBIDDEN");
+      });
+
+    await withFrontendOrigin(request(app.getHttpServer()).post("/api/v1/auth/logout"))
+      .set("Cookie", cookies)
       .expect(200);
   });
 
   it("onboards invited members and guards role boundaries", async () => {
     const owner = request.agent(app.getHttpServer());
 
-    await owner
-      .post("/api/v1/auth/login")
+    await withFrontendOrigin(owner.post("/api/v1/auth/login"))
       .send({ email: "owner@acme.example", password: "another correct horse battery" })
       .expect(200);
 
     // Only the tenant owner can mint the first HR_ADMIN: invite one first.
-    const invite = await owner
-      .post("/api/v1/organizations/current/invitations")
+    const invite = await withFrontendOrigin(owner.post("/api/v1/organizations/current/invitations"))
       .send({ email: "admin@acme.example", role: "HR_ADMIN" })
       .expect(201);
 
@@ -306,8 +317,7 @@ describe.runIf(process.env.AUTH_E2E_REDIS_URL)("Authentication flows (e2e)", () 
 
     const admin = request.agent(app.getHttpServer());
 
-    await admin
-      .post("/api/v1/auth/invitations/accept")
+    await withFrontendOrigin(admin.post("/api/v1/auth/invitations/accept"))
       .send({
         token: await inviteTokenFor("admin@acme.example"),
         firstName: "Admin",
@@ -321,13 +331,11 @@ describe.runIf(process.env.AUTH_E2E_REDIS_URL)("Authentication flows (e2e)", () 
     expect(adminMe.body.data.user.emailVerified).toBe(true);
 
     // HR_ADMIN may invite HR_MANAGER but never TENANT_OWNER.
-    await admin
-      .post("/api/v1/organizations/current/invitations")
+    await withFrontendOrigin(admin.post("/api/v1/organizations/current/invitations"))
       .send({ email: "manager@acme.example", role: "HR_MANAGER" })
       .expect(201);
 
-    await admin
-      .post("/api/v1/organizations/current/invitations")
+    await withFrontendOrigin(admin.post("/api/v1/organizations/current/invitations"))
       .send({ email: "sneaky@acme.example", role: "TENANT_OWNER" })
       .expect(403)
       .expect(({ body }) => {
@@ -338,20 +346,17 @@ describe.runIf(process.env.AUTH_E2E_REDIS_URL)("Authentication flows (e2e)", () 
   it("supports organization switching, logout, and Google-disabled behavior", async () => {
     const owner = request.agent(app.getHttpServer());
 
-    await owner
-      .post("/api/v1/auth/login")
+    await withFrontendOrigin(owner.post("/api/v1/auth/login"))
       .send({ email: "owner@acme.example", password: "another correct horse battery" })
       .expect(200);
 
-    const created = await owner
-      .post("/api/v1/organizations")
+    const created = await withFrontendOrigin(owner.post("/api/v1/organizations"))
       .send({ name: "Second Venture" })
       .expect(201);
 
     expect(created.body.data.organization.slug).toBe("second-venture");
 
-    await owner
-      .post("/api/v1/auth/switch-organization")
+    await withFrontendOrigin(owner.post("/api/v1/auth/switch-organization"))
       .send({ organizationId: created.body.data.organization.id })
       .expect(200)
       .expect(({ body }) => {
@@ -364,10 +369,10 @@ describe.runIf(process.env.AUTH_E2E_REDIS_URL)("Authentication flows (e2e)", () 
 
     expect(me.body.data.activeOrganization.slug).toBe("second-venture");
 
-    await owner.post("/api/v1/auth/logout").expect(200);
+    await withFrontendOrigin(owner.post("/api/v1/auth/logout")).expect(200);
     await owner.get("/api/v1/auth/me").expect(401);
     // Logout stays idempotent after the session is already gone.
-    await owner.post("/api/v1/auth/logout").expect(200);
+    await withFrontendOrigin(owner.post("/api/v1/auth/logout")).expect(200);
 
     await request(app.getHttpServer())
       .get("/api/v1/auth/providers")

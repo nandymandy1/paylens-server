@@ -2,9 +2,18 @@ import { HttpException, HttpStatus, Injectable, NestMiddleware } from "@nestjs/c
 import { ConfigService } from "@nestjs/config";
 import type { NextFunction, Request, Response } from "express";
 import { AUTH_ERROR_CODES } from "@/modules/auth/constants/auth.constants.js";
+import {
+  ACCESS_COOKIE_NAME,
+  REFRESH_COOKIE_NAME,
+} from "@/modules/auth/constants/auth.constants.js";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 const UNSAFE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+const hasAuthCookie = (header: string | undefined): boolean =>
+  header
+    ?.split(";")
+    .map((cookie) => cookie.trim().split("=", 1)[0])
+    .some((name) => name === ACCESS_COOKIE_NAME || name === REFRESH_COOKIE_NAME) ?? false;
 
 /**
  * Trusted-Origin enforcement for cookie-authenticated browser mutations.
@@ -50,7 +59,7 @@ export class CsrfOriginMiddleware implements NestMiddleware {
 
     const cookieHeader = req.headers.cookie;
 
-    if (typeof cookieHeader === "string" && cookieHeader.length > 0) {
+    if (hasAuthCookie(cookieHeader)) {
       throw new HttpException(
         {
           code: AUTH_ERROR_CODES.CSRF_ORIGIN_FORBIDDEN,

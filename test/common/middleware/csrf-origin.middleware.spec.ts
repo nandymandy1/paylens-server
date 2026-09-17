@@ -73,6 +73,22 @@ describe("CsrfOriginMiddleware", () => {
     );
   });
 
+  it("rejects refresh-cookie authenticated unsafe requests without an Origin", () => {
+    const middleware = createMiddleware(origins);
+
+    expect(() => run(middleware, { method: "POST", cookie: "paylens_rt=refresh-token" })).toThrow(
+      expect.objectContaining({ status: 403 }),
+    );
+  });
+
+  it("does not classify unrelated cookies as PayLens authentication", () => {
+    const middleware = createMiddleware(origins);
+
+    expect(() =>
+      run(middleware, { method: "POST", cookie: "theme=dark; analytics_id=abc" }),
+    ).not.toThrow();
+  });
+
   it("lets cookieless server and test clients through without an Origin", () => {
     const middleware = createMiddleware(origins);
 
