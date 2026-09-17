@@ -68,6 +68,13 @@ export class EmailProcessor extends WorkerHost {
       : null;
   }
 
+  async onModuleDestroy(): Promise<void> {
+    // Force-close: a graceful close hangs when Redis is unreachable, which
+    // would block process shutdown while /ready already reports Redis down.
+    // Aborting in-flight jobs at teardown is correct — Nest is terminating.
+    await this.worker.close(true);
+  }
+
   async process(job: Job<EmailJob>): Promise<void> {
     const built = buildEmail(job.data);
 
