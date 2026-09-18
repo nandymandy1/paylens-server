@@ -1,5 +1,7 @@
 import { HttpStatus, Injectable } from "@nestjs/common";
 import { PrismaService } from "@/database/prisma.service.js";
+import { ExecutionTraceService } from "@/common/tracing/execution-trace.service.js";
+import { TraceBusinessService } from "@/common/tracing/trace-method.decorator.js";
 import { AuthException } from "@/modules/auth/auth.exception.js";
 import {
   AUTH_ERROR_CODES,
@@ -19,6 +21,7 @@ import { SessionService, type CreatedSession } from "@/modules/auth/services/ses
 import { isExpired } from "@/common/utils/date.js";
 
 @Injectable()
+@TraceBusinessService(["start", "callback", "providers"])
 export class GoogleService {
   constructor(
     private readonly prisma: PrismaService,
@@ -26,6 +29,7 @@ export class GoogleService {
     private readonly sessions: SessionService,
     private readonly auth: AuthService,
     private readonly audit: AuditService,
+    readonly executionTrace: ExecutionTraceService,
   ) {}
 
   private requireEnabled(): void {

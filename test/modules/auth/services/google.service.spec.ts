@@ -172,12 +172,21 @@ const createHarness = (
   };
   const audit = { record: vi.fn(async () => undefined) };
 
+  const executionTrace = {
+    withinSpan: vi.fn(async (_n: string, _a: object, fn: () => Promise<unknown>) => fn()),
+    now: vi.fn(() => 0),
+    durationSince: vi.fn(() => 0),
+    debug: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  };
   const service = new GoogleService(
     prisma as never,
     oidc as never,
     sessions as never,
     auth as never,
     audit as never,
+    executionTrace as never,
   );
 
   return {

@@ -90,8 +90,9 @@ describe("EmailProcessor", () => {
     ];
 
     expect(context.event).toBe("dev.email");
-    expect(context.to).toBe("new@acme.example");
-    expect(context.url).toBe("http://x/invite?token=t");
+    expect(context.recipientPresent).toBe(true);
+    expect(context).not.toHaveProperty("to");
+    expect(context).not.toHaveProperty("url");
     expect(context.organization).toBe("Acme");
     expect(message).toContain("[DEV EMAIL]");
   });

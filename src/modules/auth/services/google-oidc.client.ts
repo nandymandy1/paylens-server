@@ -1,15 +1,21 @@
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { OAuth2Client, type TokenPayload } from "google-auth-library";
+import { ExecutionTraceService } from "@/common/tracing/execution-trace.service.js";
+import { TraceBusinessService } from "@/common/tracing/trace-method.decorator.js";
 import type { GoogleProfile } from "@/modules/auth/types/auth.types.js";
 
 const GOOGLE_ISSUERS = new Set(["https://accounts.google.com", "accounts.google.com"]);
 
 @Injectable()
+@TraceBusinessService(["exchangeCode", "verifyIdToken"])
 export class GoogleOidcClient {
   private client: OAuth2Client | null = null;
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    readonly executionTrace?: ExecutionTraceService,
+  ) {}
 
   get enabled(): boolean {
     return (

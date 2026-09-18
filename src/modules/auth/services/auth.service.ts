@@ -3,6 +3,8 @@ import { ConfigService } from "@nestjs/config";
 import type { User } from "@prisma/client";
 import { PrismaService } from "@/database/prisma.service.js";
 import { isPrismaUniqueViolationOn } from "@/common/utils/prisma.js";
+import { ExecutionTraceService } from "@/common/tracing/execution-trace.service.js";
+import { TraceBusinessService } from "@/common/tracing/trace-method.decorator.js";
 import { AuthException } from "@/modules/auth/auth.exception.js";
 import {
   AUTH_ERROR_CODES,
@@ -37,6 +39,18 @@ export type RegistrationInput = {
 };
 
 @Injectable()
+@TraceBusinessService([
+  "activeMemberships",
+  "register",
+  "verifyEmail",
+  "resendVerification",
+  "login",
+  "forgotPassword",
+  "resetPassword",
+  "revalidateSessionTenant",
+  "me",
+  "switchOrganization",
+])
 export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
@@ -45,6 +59,7 @@ export class AuthService {
     private readonly email: EmailService,
     private readonly audit: AuditService,
     private readonly config: ConfigService,
+    readonly executionTrace: ExecutionTraceService,
   ) {}
 
   toSafeUser(user: User): SafeUser {

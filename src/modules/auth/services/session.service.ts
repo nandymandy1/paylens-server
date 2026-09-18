@@ -4,6 +4,8 @@ import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
 import type { Redis } from "ioredis";
 import { RedisService } from "@/redis/redis.service.js";
+import { ExecutionTraceService } from "@/common/tracing/execution-trace.service.js";
+import { TraceBusinessService } from "@/common/tracing/trace-method.decorator.js";
 import { AuthException } from "@/modules/auth/auth.exception.js";
 import {
   AUTH_ERROR_CODES,
@@ -32,6 +34,16 @@ export type CreatedSession = {
 };
 
 @Injectable()
+@TraceBusinessService([
+  "createSession",
+  "getSession",
+  "refresh",
+  "setActiveOrganization",
+  "revokeSession",
+  "revokeAllUserSessions",
+  "saveOAuthState",
+  "consumeOAuthState",
+])
 export class SessionService {
   private readonly redis: Redis;
 
@@ -39,6 +51,7 @@ export class SessionService {
     redisService: RedisService,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
+    readonly executionTrace: ExecutionTraceService,
   ) {
     this.redis = redisService.getClient();
   }

@@ -96,7 +96,7 @@ describe("requestIdMiddleware", () => {
       event: "http.request.completed",
       requestId: "req-123",
       method: "GET",
-      path: "/health",
+      route: "/health",
       statusCode: 200,
       durationMs: 4.74,
     });

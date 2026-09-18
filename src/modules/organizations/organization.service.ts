@@ -1,5 +1,7 @@
 import { HttpStatus, Injectable } from "@nestjs/common";
 import { PrismaService } from "@/database/prisma.service.js";
+import { ExecutionTraceService } from "@/common/tracing/execution-trace.service.js";
+import { TraceBusinessService } from "@/common/tracing/trace-method.decorator.js";
 import { AuthException } from "@/modules/auth/auth.exception.js";
 import {
   AUTH_ERROR_CODES,
@@ -12,11 +14,13 @@ import { SessionService } from "@/modules/auth/services/session.service.js";
 import { activeTenantMembershipWhere } from "@/modules/auth/utils/tenant-access.utils.js";
 
 @Injectable()
+@TraceBusinessService(["createOrganization", "members", "member", "changeRole"])
 export class OrganizationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly sessions: SessionService,
     private readonly audit: AuditService,
+    readonly executionTrace: ExecutionTraceService,
   ) {}
 
   private async requireActiveMembership(principal: RequestPrincipal) {

@@ -219,6 +219,14 @@ const createService = (prisma: ReturnType<typeof createPrisma>) => {
     },
   };
 
+  const executionTrace = {
+    withinSpan: vi.fn(async (_n: string, _a: object, fn: () => Promise<unknown>) => fn()),
+    now: vi.fn(() => 0),
+    durationSince: vi.fn(() => 0),
+    debug: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  };
   const service = new AuthService(
     prisma as never,
     new PasswordService(),
@@ -226,6 +234,7 @@ const createService = (prisma: ReturnType<typeof createPrisma>) => {
     email as never,
     audit as never,
     config as never,
+    executionTrace as never,
   );
 
   return { service, sessions, email, audit, prisma };

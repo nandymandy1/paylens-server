@@ -9,7 +9,16 @@ export type ValidatedEnvironment = {
   REDIS_URL: string;
   CORS_ORIGINS: string;
   LOG_LEVEL: "debug" | "info" | "warn" | "error";
+  LOG_FORMAT: "json" | "pretty";
+  PINO_CONSOLE_ENABLED: boolean;
   EXECUTION_TRACE_ENABLED: boolean;
+  OTEL_ENABLED: boolean;
+  OTEL_LOGS_ENABLED: boolean;
+  OTEL_SERVICE_NAME: string;
+  OTEL_EXPORTER_OTLP_ENDPOINT: string;
+  OTEL_TRACE_SAMPLE_RATIO: number;
+  SLOW_QUERY_MS: number;
+  DB_QUERY_LOG_ENABLED: boolean;
   THROTTLE_TTL_MS: number;
   THROTTLE_LIMIT: number;
   FRONTEND_URL: string;
@@ -72,6 +81,16 @@ const validateLogLevel = (value: unknown): ValidatedEnvironment["LOG_LEVEL"] => 
   }
 
   return level as ValidatedEnvironment["LOG_LEVEL"];
+};
+
+const validateLogFormat = (value: unknown): ValidatedEnvironment["LOG_FORMAT"] => {
+  const format = value ?? "json";
+
+  if (format !== "json" && format !== "pretty") {
+    throw new Error("LOG_FORMAT must be json or pretty");
+  }
+
+  return format;
 };
 
 const validateBoolean = (value: unknown, defaultValue: boolean, name: string): boolean => {
@@ -229,10 +248,41 @@ export const validateEnvironment = (raw: Record<string, unknown>): ValidatedEnvi
   const redisUrl = requireUrl(raw.REDIS_URL, "REDIS_URL", ["redis:", "rediss:"]);
   const corsOrigins = validateCorsOrigins(raw.CORS_ORIGINS);
   const logLevel = validateLogLevel(raw.LOG_LEVEL);
+  const logFormat = validateLogFormat(raw.LOG_FORMAT);
+  const pinoConsoleEnabled = validateBoolean(
+    raw.PINO_CONSOLE_ENABLED,
+    true,
+    "PINO_CONSOLE_ENABLED",
+  );
   const executionTraceEnabled = validateBoolean(
     raw.EXECUTION_TRACE_ENABLED,
     true,
     "EXECUTION_TRACE_ENABLED",
+  );
+  const otelEnabled = validateBoolean(raw.OTEL_ENABLED, true, "OTEL_ENABLED");
+  const otelLogsEnabled = validateBoolean(raw.OTEL_LOGS_ENABLED, true, "OTEL_LOGS_ENABLED");
+  const otelServiceName =
+    raw.OTEL_SERVICE_NAME === undefined || raw.OTEL_SERVICE_NAME === ""
+      ? "paylens-server"
+      : String(raw.OTEL_SERVICE_NAME);
+  const otelEndpoint =
+    raw.OTEL_EXPORTER_OTLP_ENDPOINT === undefined || raw.OTEL_EXPORTER_OTLP_ENDPOINT === ""
+      ? ""
+      : requireUrl(raw.OTEL_EXPORTER_OTLP_ENDPOINT, "OTEL_EXPORTER_OTLP_ENDPOINT", [
+          "http:",
+          "https:",
+        ]);
+  const otelSampleRatio = Number(raw.OTEL_TRACE_SAMPLE_RATIO ?? 1);
+
+  if (!Number.isFinite(otelSampleRatio) || otelSampleRatio < 0 || otelSampleRatio > 1) {
+    throw new Error("OTEL_TRACE_SAMPLE_RATIO must be a number between 0 and 1");
+  }
+
+  const slowQueryMs = validateInteger(raw.SLOW_QUERY_MS, 100, "SLOW_QUERY_MS", 1, 60_000);
+  const dbQueryLogEnabled = validateBoolean(
+    raw.DB_QUERY_LOG_ENABLED,
+    false,
+    "DB_QUERY_LOG_ENABLED",
   );
   const throttleTtl = validateInteger(raw.THROTTLE_TTL_MS, 60_000, "THROTTLE_TTL_MS", 1, 3_600_000);
   const throttleLimit = validateInteger(raw.THROTTLE_LIMIT, 100, "THROTTLE_LIMIT", 1, 10_000);
@@ -303,11 +353,20 @@ export const validateEnvironment = (raw: Record<string, unknown>): ValidatedEnvi
     NODE_ENV: nodeEnv,
     REDIS_URL: redisUrl,
     LOG_LEVEL: logLevel,
+    LOG_FORMAT: logFormat,
+    PINO_CONSOLE_ENABLED: pinoConsoleEnabled,
     CORS_ORIGINS: corsOrigins,
     DATABASE_URL: databaseUrl,
     THROTTLE_TTL_MS: throttleTtl,
     THROTTLE_LIMIT: throttleLimit,
     EXECUTION_TRACE_ENABLED: executionTraceEnabled,
+    OTEL_ENABLED: otelEnabled,
+    OTEL_LOGS_ENABLED: otelLogsEnabled,
+    OTEL_SERVICE_NAME: otelServiceName,
+    OTEL_EXPORTER_OTLP_ENDPOINT: otelEndpoint,
+    OTEL_TRACE_SAMPLE_RATIO: otelSampleRatio,
+    SLOW_QUERY_MS: slowQueryMs,
+    DB_QUERY_LOG_ENABLED: dbQueryLogEnabled,
     FRONTEND_URL: frontendUrl,
     AUTH_ACCESS_TOKEN_SECRET: authAccessTokenSecret,
     AUTH_ACCESS_TTL_SECONDS: authAccessTtl,

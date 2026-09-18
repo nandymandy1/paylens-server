@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { JwtService } from "@nestjs/jwt";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CONSUME_OAUTH_STATE_SCRIPT,
   ROTATE_SCRIPT,
@@ -192,7 +192,21 @@ const createService = (redis?: FakeRedis) => {
     },
   } as never;
 
-  return new SessionService({ getClient: () => redis ?? new FakeRedis() } as never, jwt, config);
+  const executionTrace = {
+    withinSpan: vi.fn(async (_n: string, _a: object, fn: () => Promise<unknown>) => fn()),
+    now: vi.fn(() => 0),
+    durationSince: vi.fn(() => 0),
+    debug: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  };
+
+  return new SessionService(
+    { getClient: () => redis ?? new FakeRedis() } as never,
+    jwt,
+    config,
+    executionTrace as never,
+  );
 };
 
 describe("SessionService", () => {

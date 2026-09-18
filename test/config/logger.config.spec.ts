@@ -8,7 +8,7 @@ type PinoHttpShape = {
   redact?: { paths: string[]; censor: string };
   serializers?: Record<string, () => unknown>;
   customProps?: (request: unknown) => unknown;
-  transport?: unknown;
+  formatters?: { log: (event: Record<string, unknown>) => Record<string, unknown> };
 };
 
 function buildConfig(environment: string, logLevel = "info") {
@@ -22,6 +22,13 @@ function buildConfig(environment: string, logLevel = "info") {
         return logLevel;
       }
 
+      if (key === "app.logFormat") return "json";
+
+      if (key === "app.pinoConsoleEnabled") return true;
+      if (key === "app.otelEnabled") return true;
+      if (key === "app.otelLogsEnabled") return true;
+      if (key === "app.otelExporterOtlpEndpoint") return "";
+
       throw new Error(`Unexpected config key: ${key}`);
     },
   } as never;
@@ -30,7 +37,7 @@ function buildConfig(environment: string, logLevel = "info") {
 function httpOptions(environment: string, logLevel = "info"): PinoHttpShape {
   const options = buildLoggerModuleOptions(buildConfig(environment, logLevel));
 
-  return options.pinoHttp as unknown as PinoHttpShape;
+  return (options.pinoHttp as [PinoHttpShape])[0];
 }
 
 describe("logger module options", () => {
@@ -49,7 +56,7 @@ describe("logger module options", () => {
   it("keeps sensitive redaction as defense-in-depth", () => {
     const redact = httpOptions("production").redact as { paths: string[]; censor: string };
 
-    expect(redact.censor).toBe("[REDACTED]");
+    expect(redact.censor).toBe("***");
     expect(redact.paths).toEqual(
       expect.arrayContaining([
         "req.headers.authorization",
@@ -67,12 +74,23 @@ describe("logger module options", () => {
     expect(customProps({ requestId: "req-1" })).toEqual({ requestId: "req-1" });
   });
 
-  it("uses pretty human-readable logs only in development", () => {
-    expect(httpOptions("development").transport).toMatchObject({ target: "pino-pretty" });
-    expect(httpOptions("production")).not.toHaveProperty("transport");
+  it("sanitizes one canonical event before fan-out", () => {
+    const formatter = httpOptions("production").formatters?.log;
+
+    expect(
+      formatter?.({ event: "hello", refreshToken: "private", password: "secret" }),
+    ).toMatchObject({
+      event: "hello",
+      refreshToken: "***",
+      password: "***",
+    });
   });
 
   it("honors the configured log level", () => {
     expect(httpOptions("production", "debug").level).toBe("debug");
+  });
+
+  it("uses JSON-lines by default and reserves pretty output for explicit opt-in", () => {
+    expect(httpOptions("development")).not.toHaveProperty("transport");
   });
 });

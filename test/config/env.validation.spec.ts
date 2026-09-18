@@ -11,7 +11,21 @@ const valid = {
 
 describe("validateEnvironment", () => {
   it("accepts validated runtime configuration", () => {
-    expect(validateEnvironment(valid).PORT).toBe(4000);
+    const parsed = validateEnvironment(valid);
+
+    expect(parsed.PORT).toBe(4000);
+    expect(parsed.LOG_FORMAT).toBe("json");
+    expect(parsed.DB_QUERY_LOG_ENABLED).toBe(false);
+  });
+
+  it("validates JSON/pretty format and database query log configuration", () => {
+    expect(
+      validateEnvironment({ ...valid, LOG_FORMAT: "pretty", DB_QUERY_LOG_ENABLED: "true" }),
+    ).toMatchObject({
+      LOG_FORMAT: "pretty",
+      DB_QUERY_LOG_ENABLED: true,
+    });
+    expect(() => validateEnvironment({ ...valid, LOG_FORMAT: "yaml" })).toThrow("LOG_FORMAT");
   });
 
   it("accepts redis and rediss URLs and rejects malformed Redis URLs", () => {

@@ -2,6 +2,8 @@ import { Injectable } from "@nestjs/common";
 import { InjectQueue } from "@nestjs/bullmq";
 import type { Queue } from "bullmq";
 import type { MembershipRole } from "@prisma/client";
+import { ExecutionTraceService } from "@/common/tracing/execution-trace.service.js";
+import { TraceBusinessService } from "@/common/tracing/trace-method.decorator.js";
 import { EMAIL_JOB, EMAIL_QUEUE } from "@/modules/email/email.constants.js";
 import type { EmailJob } from "@/modules/email/email.type.js";
 
@@ -18,8 +20,12 @@ const jobOptions = {
  * touching SMTP. The worker owns actual delivery.
  */
 @Injectable()
+@TraceBusinessService(["sendVerificationEmail", "sendPasswordResetEmail", "sendInvitationEmail"])
 export class EmailService {
-  constructor(@InjectQueue(EMAIL_QUEUE) private readonly queue: Queue<EmailJob>) {}
+  constructor(
+    @InjectQueue(EMAIL_QUEUE) private readonly queue: Queue<EmailJob>,
+    readonly executionTrace: ExecutionTraceService,
+  ) {}
 
   async sendVerificationEmail(to: string, verificationUrl: string): Promise<void> {
     await this.queue.add(

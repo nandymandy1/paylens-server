@@ -3,6 +3,8 @@ import { ConfigService } from "@nestjs/config";
 import type { Job } from "bullmq";
 import { createTransport, type Transporter } from "nodemailer";
 import { PinoLogger } from "nestjs-pino";
+import { ExecutionTraceService } from "@/common/tracing/execution-trace.service.js";
+import { TraceBusinessService } from "@/common/tracing/trace-method.decorator.js";
 import { EMAIL_QUEUE } from "@/modules/email/email.constants.js";
 import type { EmailJob } from "@/modules/email/email.type.js";
 
@@ -55,6 +57,7 @@ export const buildEmail = (job: EmailJob): BuiltEmail => {
  * HTTP handlers or domain/auth services.
  */
 @Processor(EMAIL_QUEUE)
+@TraceBusinessService(["process"])
 export class EmailProcessor extends WorkerHost {
   private readonly transporter: Transporter | null;
   private readonly from: string;
@@ -63,6 +66,7 @@ export class EmailProcessor extends WorkerHost {
   constructor(
     private readonly config: ConfigService,
     private readonly logger: PinoLogger,
+    readonly executionTrace?: ExecutionTraceService,
   ) {
     super();
 
@@ -109,15 +113,14 @@ export class EmailProcessor extends WorkerHost {
       throw new Error(`Email delivery unavailable: SMTP is not configured (job ${job.name})`);
     }
 
-    // Narrow, deliberate development exception: the only place action URLs may
-    // be logged, so local auth flows stay testable without a mail provider.
+    // Action URLs contain credentials. Development delivery remains observable
+    // without ever writing a reusable link or recipient address to logs.
     this.logger.info(
       {
-        url: built.url,
-        to: job.data.to,
         event: "dev.email",
         type: job.data.type,
         subject: built.subject,
+        recipientPresent: true,
         ...(job.data.type === "ORGANIZATION_INVITATION"
           ? {
               organization: job.data.organizationName,
@@ -125,7 +128,7 @@ export class EmailProcessor extends WorkerHost {
             }
           : {}),
       },
-      `[DEV EMAIL] type=${job.data.type} to=${job.data.to}`,
+      `[DEV EMAIL] type=${job.data.type}`,
     );
   }
 }

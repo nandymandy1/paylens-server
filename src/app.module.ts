@@ -8,8 +8,7 @@ import { ResponseEnvelopeInterceptor } from "@/common/interceptors/response-enve
 import { CsrfOriginMiddleware } from "@/common/middleware/csrf-origin.middleware.js";
 import { RequestContextMiddleware } from "@/common/middleware/request-id.middleware.js";
 import { createGlobalValidationPipe } from "@/common/pipes/global-validation.pipe.js";
-import { ControllerTraceInterceptor } from "@/common/tracing/controller-trace.interceptor.js";
-import { ExecutionTraceService } from "@/common/tracing/execution-trace.service.js";
+import { TracingModule } from "@/common/tracing/tracing.module.js";
 import appConfig from "@/config/app.config.js";
 import { validateEnvironment } from "@/config/env.validation.js";
 import { buildLoggerModuleOptions } from "@/config/logger.config.js";
@@ -46,6 +45,7 @@ import { RedisModule } from "@/redis/redis.module.js";
         },
       ],
     }),
+    TracingModule,
     DatabaseModule,
     RedisModule,
     QueueModule,
@@ -57,12 +57,11 @@ import { RedisModule } from "@/redis/redis.module.js";
     HealthModule,
   ],
   providers: [
-    ExecutionTraceService,
     RequestContextMiddleware,
     CsrfOriginMiddleware,
     { provide: APP_PIPE, useFactory: createGlobalValidationPipe },
     { provide: APP_FILTER, useClass: HttpExceptionFilter },
-    { provide: APP_INTERCEPTOR, useClass: ControllerTraceInterceptor },
+    // ControllerTraceInterceptor is registered via ObservabilityModule (APP_INTERCEPTOR).
     { provide: APP_INTERCEPTOR, useClass: ResponseEnvelopeInterceptor },
     { provide: APP_GUARD, useClass: ThrottlerGuard },
   ],

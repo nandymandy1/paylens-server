@@ -13,6 +13,7 @@ import {
 } from "@/common/pagination/cursor-pagination.util.js";
 import type { CursorPage } from "@/common/pagination/cursor-pagination.type.js";
 import { ExecutionTraceService } from "@/common/tracing/execution-trace.service.js";
+import { TraceBusinessService } from "@/common/tracing/trace-method.decorator.js";
 import { PrismaService } from "@/database/prisma.service.js";
 import { AuthException } from "@/modules/auth/auth.exception.js";
 import { AUTH_ERROR_CODES } from "@/modules/auth/constants/auth.constants.js";
@@ -109,6 +110,7 @@ type EmployeeRow = {
 };
 
 @Injectable()
+@TraceBusinessService(["list", "detail", "createEmployee"])
 export class EmployeesService {
   constructor(
     private readonly prisma: PrismaService,

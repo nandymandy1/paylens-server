@@ -1,6 +1,8 @@
 import { HttpStatus, Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "@/database/prisma.service.js";
+import { ExecutionTraceService } from "@/common/tracing/execution-trace.service.js";
+import { TraceBusinessService } from "@/common/tracing/trace-method.decorator.js";
 import { AuthException } from "@/modules/auth/auth.exception.js";
 import {
   AUTH_ERROR_CODES,
@@ -25,6 +27,14 @@ import { EmailService } from "@/modules/email/email.service.js";
 import { daysFromNow, isExpired } from "@/common/utils/date.js";
 
 @Injectable()
+@TraceBusinessService([
+  "invite",
+  "preview",
+  "acceptAsAuthenticated",
+  "acceptAsNewUser",
+  "revoke",
+  "list",
+])
 export class InvitationService {
   constructor(
     private readonly prisma: PrismaService,
@@ -33,6 +43,7 @@ export class InvitationService {
     private readonly email: EmailService,
     private readonly audit: AuditService,
     private readonly config: ConfigService,
+    readonly executionTrace: ExecutionTraceService,
   ) {}
 
   private async requireMembership(principal: RequestPrincipal) {

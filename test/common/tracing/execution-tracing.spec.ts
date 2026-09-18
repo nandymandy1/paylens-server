@@ -6,7 +6,7 @@ import { ExecutionTraceService } from "@/common/tracing/execution-trace.service.
 import { TraceMethod } from "@/common/tracing/trace-method.decorator.js";
 
 function createTraceService() {
-  const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn() };
+  const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
   const config = { getOrThrow: () => true };
   const trace = new ExecutionTraceService(config as never, logger as never);
 
@@ -38,7 +38,7 @@ describe("execution tracing", () => {
 
     expect(logger.debug).toHaveBeenCalledWith(
       expect.objectContaining({
-        event: "controller.start",
+        event: "controller.started",
         controller: "HealthController",
         method: "health",
         requestId: "controller-request",
@@ -46,7 +46,7 @@ describe("execution tracing", () => {
     );
     expect(logger.debug).toHaveBeenCalledWith(
       expect.objectContaining({
-        event: "controller.complete",
+        event: "controller.completed",
         durationMs: expect.any(Number),
         requestId: "controller-request",
       }),
@@ -71,7 +71,7 @@ describe("execution tracing", () => {
 
     expect(logger.debug).toHaveBeenCalledWith(
       expect.objectContaining({
-        event: "service.start",
+        event: "service.started",
         service: "ExampleService",
         method: "execute",
         requestId: "service-request",
@@ -79,7 +79,7 @@ describe("execution tracing", () => {
     );
     expect(logger.debug).toHaveBeenCalledWith(
       expect.objectContaining({
-        event: "service.complete",
+        event: "service.completed",
         durationMs: expect.any(Number),
         requestId: "service-request",
       }),
@@ -105,9 +105,9 @@ describe("execution tracing", () => {
       ),
     ).rejects.toThrow("controlled failure");
 
-    expect(logger.debug).toHaveBeenCalledWith(
+    expect(logger.error).toHaveBeenCalledWith(
       expect.objectContaining({
-        event: "service.error",
+        event: "service.failed",
         requestId: "failure-request",
         durationMs: expect.any(Number),
         error: { name: "Error" },
@@ -200,5 +200,30 @@ describe("authenticated trace context", () => {
         expect(payload).not.toHaveProperty(key);
       }
     }
+  });
+});
+
+describe("database execution events", () => {
+  it("emits DEBUG for normal queries and WARN for slow queries independently", () => {
+    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const config = {
+      getOrThrow: (key: string) => {
+        if (key === "app.slowQueryMs") return 100;
+        if (key === "app.dbQueryLogEnabled") return true;
+
+        return true;
+      },
+    };
+    const trace = new ExecutionTraceService(config as never, logger as never);
+
+    trace.recordDatabaseQuery({ model: "Employee", action: "findMany", durationMs: 99 });
+    trace.recordDatabaseQuery({ model: "Employee", action: "findMany", durationMs: 101 });
+
+    expect(logger.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ event: "db.query.completed", durationMs: 99 }),
+    );
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ event: "db.query.slow", durationMs: 101, thresholdMs: 100 }),
+    );
   });
 });

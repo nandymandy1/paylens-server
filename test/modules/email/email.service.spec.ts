@@ -4,7 +4,15 @@ import { EmailService } from "@/modules/email/email.service.js";
 
 const createService = () => {
   const queue = { add: vi.fn(async () => ({})) };
-  const service = new EmailService(queue as never);
+  const executionTrace = {
+    withinSpan: vi.fn(async (_n: string, _a: object, fn: () => Promise<unknown>) => fn()),
+    now: vi.fn(() => 0),
+    durationSince: vi.fn(() => 0),
+    debug: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  };
+  const service = new EmailService(queue as never, executionTrace as never);
 
   return { service, queue };
 };

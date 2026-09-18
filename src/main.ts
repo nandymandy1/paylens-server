@@ -1,3 +1,6 @@
+// OTel SDK must be registered before any Nest module import (Prisma, ioredis).
+import "./telemetry-bootstrap.js";
+
 import { Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 

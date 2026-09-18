@@ -1,6 +1,7 @@
 import { HttpStatus, Injectable } from "@nestjs/common";
 import { isPrismaRelationViolation, isPrismaUniqueViolationOn } from "@/common/utils/prisma.js";
 import { ExecutionTraceService } from "@/common/tracing/execution-trace.service.js";
+import { TraceBusinessService } from "@/common/tracing/trace-method.decorator.js";
 import { PrismaService } from "@/database/prisma.service.js";
 import { AuthException } from "@/modules/auth/auth.exception.js";
 import { AUTH_ERROR_CODES } from "@/modules/auth/constants/auth.constants.js";
@@ -34,6 +35,7 @@ type DepartmentRow = {
 };
 
 @Injectable()
+@TraceBusinessService(["list", "detail", "create", "update", "remove"])
 export class DepartmentsService {
   constructor(
     private readonly prisma: PrismaService,
