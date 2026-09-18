@@ -58,6 +58,28 @@ enum AuthAuditAction {
   SESSION_REVOKED
 }
 
+enum EmploymentType {
+  FULL_TIME
+  PART_TIME
+  CONTRACTOR
+  INTERN
+}
+
+enum EmployeeStatus {
+  ACTIVE
+  ON_LEAVE
+  TERMINATED
+}
+
+enum CompensationChangeReason {
+  INITIAL
+  ANNUAL_REVIEW
+  PROMOTION
+  MARKET_ADJUSTMENT
+  CORRECTION
+  OTHER
+}
+
 model User {
   id             String     @id @default(cuid())
   email          String     @unique
@@ -75,6 +97,7 @@ model User {
   sentInvitations OrganizationInvitation[] @relation("InvitationInviter")
   auditActorEvents  AuthAuditEvent[] @relation("AuditActor")
   auditTargetEvents AuthAuditEvent[] @relation("AuditTarget")
+  compensationChanges CompensationHistory[] @relation("CompensationHistoryChangedBy")
 
   @@index([status])
 }
@@ -89,6 +112,8 @@ model Organization {
 
   memberships OrganizationMembership[]
   invitations OrganizationInvitation[]
+  departments Department[]
+  employees   Employee[]
 
   @@index([status])
 }
@@ -177,4 +202,86 @@ model AuthAuditEvent {
   @@index([action, createdAt])
   @@index([actorUserId])
   @@index([organizationId])
+}
+
+model Department {
+  id             String   @id @default(cuid())
+  organizationId String
+  code           String
+  name           String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  employees    Employee[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId, name, id])
+}
+
+model Employee {
+  id               String         @id @default(cuid())
+  organizationId   String
+  departmentId     String
+  employeeNumber   String
+  firstName        String
+  lastName         String
+  workEmail        String?
+  jobTitle         String
+  level            String?
+  countryCode      String         @db.VarChar(2)
+  employmentType   EmploymentType
+  status           EmployeeStatus
+  hireDate         DateTime       @db.Date
+  terminationDate  DateTime?      @db.Date
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  organization        Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  department          Department            @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  currentCompensation EmployeeCompensation?
+  compensationHistory CompensationHistory[]
+
+  @@unique([organizationId, employeeNumber])
+  @@unique([organizationId, workEmail])
+  @@index([organizationId, status, lastName, id])
+  @@index([organizationId, departmentId, lastName, id])
+  @@index([organizationId, countryCode, lastName, id])
+}
+
+model EmployeeCompensation {
+  id               String   @id @default(cuid())
+  employeeId       String   @unique
+  annualBaseSalary Decimal  @db.Decimal(19, 2)
+  currency         String   @db.VarChar(3)
+  effectiveFrom    DateTime @db.Date
+  version          Int      @default(1)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([annualBaseSalary, id])
+}
+
+model CompensationHistory {
+  id                       String                   @id @default(cuid())
+  employeeId               String
+  version                  Int
+  previousAnnualBaseSalary Decimal?                 @db.Decimal(19, 2)
+  newAnnualBaseSalary      Decimal                  @db.Decimal(19, 2)
+  previousCurrency         String?                  @db.VarChar(3)
+  newCurrency              String                   @db.VarChar(3)
+  previousEffectiveFrom    DateTime?                @db.Date
+  effectiveFrom            DateTime                 @db.Date
+  reason                   CompensationChangeReason
+  note                     String?
+  changedByUserId          String?
+  createdAt                DateTime                 @default(now())
+
+  employee      Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  changedByUser User?    @relation("CompensationHistoryChangedBy", fields: [changedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([employeeId, version])
+  @@index([employeeId, effectiveFrom, id])
 }
