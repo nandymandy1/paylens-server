@@ -67,6 +67,12 @@ export class OrganizationsController {
     return this.organizations.members(principal);
   }
 
+  @Get("current/members/:id")
+  @ApiOperation({ summary: "Get a member of the active organization" })
+  async member(@CurrentPrincipal() principal: RequestPrincipal, @Param("id") id: string) {
+    return this.organizations.member(principal, id);
+  }
+
   @Get("current/invitations")
   @ApiOperation({ summary: "List invitations of the active organization" })
   async invitationList(@CurrentPrincipal() principal: RequestPrincipal) {

@@ -54,22 +54,28 @@ const createHarness = () => {
 
   const prisma = {
     organizationMembership: {
-      findFirst: vi.fn(async ({ where }: { where: Record<string, string> }) => {
-        const found =
-          memberships.find(
-            (membership) =>
-              (where.id === undefined || membership.id === where.id) &&
-              (where.userId === undefined || membership.userId === where.userId) &&
-              (where.organizationId === undefined ||
-                membership.organizationId === where.organizationId),
-          ) ?? null;
+      findFirst: vi.fn(
+        async ({ where, select }: { where: Record<string, string>; select?: unknown }) => {
+          const found =
+            memberships.find(
+              (membership) =>
+                (where.id === undefined || membership.id === where.id) &&
+                (where.userId === undefined || membership.userId === where.userId) &&
+                (where.organizationId === undefined ||
+                  membership.organizationId === where.organizationId),
+            ) ?? null;
 
-        if (!found) {
-          return null;
-        }
+          if (!found) {
+            return null;
+          }
 
-        return { ...found, organization: orgs.find((org) => org.id === found.organizationId) };
-      }),
+          const user = users.find((candidate) => candidate.id === found.userId);
+
+          return select
+            ? { ...found, user }
+            : { ...found, organization: orgs.find((org) => org.id === found.organizationId) };
+        },
+      ),
       findMany: vi.fn(async () =>
         memberships.map((membership) => ({
           ...membership,
@@ -185,6 +191,58 @@ describe("OrganizationService", () => {
         role: "HR_MANAGER",
       }),
     ).resolves.toHaveLength(4);
+  });
+
+  it("returns a safe same-organization member detail", async () => {
+    const { service } = createHarness();
+    const member = await service.member(ownerPrincipal, "membership-admin");
+
+    expect(member).toMatchObject({
+      id: "membership-admin",
+      email: "admin@acme.example",
+      role: "HR_ADMIN",
+    });
+    expect(member).not.toHaveProperty("passwordHash");
+    expect(member).not.toHaveProperty("sessionId");
+  });
+
+  it("returns the same not-found result for unknown and cross-organization members", async () => {
+    const { service, memberships } = createHarness();
+
+    memberships.push({
+      id: "membership-other-org",
+      userId: "user-other",
+      organizationId: "org-2",
+      role: "EMPLOYEE",
+      status: "ACTIVE",
+      createdAt: new Date("2026-01-04"),
+    });
+
+    await expect(service.member(ownerPrincipal, "unknown-membership")).rejects.toMatchObject({
+      code: "MEMBERSHIP_NOT_FOUND",
+      status: 404,
+    });
+    await expect(service.member(ownerPrincipal, "membership-other-org")).rejects.toMatchObject({
+      code: "MEMBERSHIP_NOT_FOUND",
+      status: 404,
+    });
+  });
+
+  it("forbids member detail access without member-view permission", async () => {
+    const { service } = createHarness();
+
+    await expect(
+      service.member(
+        {
+          userId: "user-emp",
+          sessionId: "session-3",
+          organizationId: "org-1",
+          membershipId: "membership-emp",
+          role: "EMPLOYEE",
+        },
+        "membership-admin",
+      ),
+    ).rejects.toMatchObject({ code: "INSUFFICIENT_PERMISSION", status: 403 });
   });
 
   it("forbids MANAGER, EMPLOYEE, and VIEWER_AUDITOR from listing members", async () => {

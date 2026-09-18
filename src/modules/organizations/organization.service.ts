@@ -48,6 +48,16 @@ export class OrganizationService {
     return membership;
   }
 
+  private assertCanViewMembers(role: MembershipRoleName) {
+    if (role !== "TENANT_OWNER" && role !== "HR_ADMIN" && role !== "HR_MANAGER") {
+      throw new AuthException(
+        AUTH_ERROR_CODES.INSUFFICIENT_PERMISSION,
+        "Your role cannot view organization members.",
+        HttpStatus.FORBIDDEN,
+      );
+    }
+  }
+
   /** Creates an organization for an authenticated user with no tenant yet (Google onboarding). */
   async createOrganization(
     principal: RequestPrincipal,
@@ -117,17 +127,7 @@ export class OrganizationService {
   async members(principal: RequestPrincipal) {
     const membership = await this.requireActiveMembership(principal);
 
-    if (
-      membership.role !== "TENANT_OWNER" &&
-      membership.role !== "HR_ADMIN" &&
-      membership.role !== "HR_MANAGER"
-    ) {
-      throw new AuthException(
-        AUTH_ERROR_CODES.INSUFFICIENT_PERMISSION,
-        "Your role cannot view organization members.",
-        HttpStatus.FORBIDDEN,
-      );
-    }
+    this.assertCanViewMembers(membership.role);
 
     const members = await this.prisma.organizationMembership.findMany({
       where: { organizationId: membership.organizationId },
@@ -145,6 +145,49 @@ export class OrganizationService {
       status: member.status,
       createdAt: member.createdAt.toISOString(),
     }));
+  }
+
+  async member(principal: RequestPrincipal, membershipId: string) {
+    const membership = await this.requireActiveMembership(principal);
+
+    this.assertCanViewMembers(membership.role);
+
+    const member = await this.prisma.organizationMembership.findFirst({
+      where: { id: membershipId, organizationId: membership.organizationId },
+      select: {
+        id: true,
+        role: true,
+        status: true,
+        createdAt: true,
+        user: {
+          select: {
+            id: true,
+            email: true,
+            firstName: true,
+            lastName: true,
+          },
+        },
+      },
+    });
+
+    if (!member) {
+      throw new AuthException(
+        "MEMBERSHIP_NOT_FOUND",
+        "Membership was not found.",
+        HttpStatus.NOT_FOUND,
+      );
+    }
+
+    return {
+      id: member.id,
+      userId: member.user.id,
+      email: member.user.email,
+      firstName: member.user.firstName,
+      lastName: member.user.lastName,
+      role: member.role,
+      status: member.status,
+      createdAt: member.createdAt.toISOString(),
+    };
   }
 
   async changeRole(

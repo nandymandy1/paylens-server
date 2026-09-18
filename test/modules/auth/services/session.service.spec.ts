@@ -260,6 +260,23 @@ describe("SessionService", () => {
     await expect(redis.smembers("auth:user-sessions:user-1")).resolves.toEqual([]);
   });
 
+  it("cannot resurrect a logged-out session with its pre-logout refresh credential", async () => {
+    const created = await service.createSession({ userId: "user-1" });
+    const [sessionId, secret] = created.refreshToken.split(".");
+
+    // login → logout: the server revokes the Redis session.
+    await service.revokeSession(sessionId);
+    await expect(service.getSession(sessionId)).resolves.toBeNull();
+
+    // Attempting refresh with the pre-logout credential issues no session,
+    // no access token, and no replacement refresh token.
+    await expect(service.refresh(sessionId, secret)).rejects.toMatchObject({
+      code: "REFRESH_TOKEN_INVALID",
+    });
+    await expect(service.getSession(sessionId)).resolves.toBeNull();
+    await expect(redis.smembers("auth:user-sessions:user-1")).resolves.toEqual([]);
+  });
+
   it("stores only a hash of the user agent", async () => {
     const created = await service.createSession({ userId: "user-1", userAgent: "TestAgent/1.0" });
     const stored = JSON.parse(redis.store.get(`auth:session:${created.sessionId}`) as string);

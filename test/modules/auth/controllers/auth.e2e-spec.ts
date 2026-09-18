@@ -369,7 +369,35 @@ describe.runIf(process.env.AUTH_E2E_REDIS_URL)("Authentication flows (e2e)", () 
 
     expect(me.body.data.activeOrganization.slug).toBe("second-venture");
 
+    // Capture a valid pre-logout refresh credential for the resurrection probe.
+    const rotated = await withFrontendOrigin(owner.post("/api/v1/auth/refresh"))
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data.refreshed).toBe(true);
+      });
+    const rotatedCookies = rotated.headers["set-cookie"] as unknown as string[];
+    const preLogoutRefresh = rotatedCookies.find((cookie) =>
+      cookie.startsWith("paylens_rt="),
+    ) as string;
+    const preLogoutAccess = rotatedCookies.find((cookie) =>
+      cookie.startsWith("paylens_at="),
+    ) as string;
+
     await withFrontendOrigin(owner.post("/api/v1/auth/logout")).expect(200);
+    await owner.get("/api/v1/auth/me").expect(401);
+    // The pre-logout access token dies with the session.
+    await request(app.getHttpServer())
+      .get("/api/v1/auth/me")
+      .set("Cookie", [preLogoutAccess])
+      .expect(401);
+    // A pre-logout refresh credential cannot resurrect the session: no new
+    // access is issued and the client stays anonymous afterwards.
+    await withFrontendOrigin(request(app.getHttpServer()).post("/api/v1/auth/refresh"))
+      .set("Cookie", [preLogoutRefresh])
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data.refreshed).toBe(false);
+      });
     await owner.get("/api/v1/auth/me").expect(401);
     // Logout stays idempotent after the session is already gone.
     await withFrontendOrigin(owner.post("/api/v1/auth/logout")).expect(200);
