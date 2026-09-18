@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Prisma } from "@prisma/client";
 import { AuthService } from "@/modules/auth/services/auth.service.js";
 import { PasswordService } from "@/modules/auth/services/password.service.js";
 
@@ -274,6 +275,66 @@ describe("AuthService credentials", () => {
     await expect(service.register(validRegistration)).rejects.toMatchObject({
       code: "EMAIL_ALREADY_REGISTERED",
       status: 409,
+    });
+  });
+
+  it("maps an authoritative P2002 email race after preflight to the stable conflict", async () => {
+    const { service, prisma } = context;
+
+    prisma.$transaction.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError("unique email", {
+        clientVersion: "test",
+        code: "P2002",
+        meta: { target: ["email"] },
+      }),
+    );
+
+    await expect(service.register(validRegistration)).rejects.toMatchObject({
+      code: "EMAIL_ALREADY_REGISTERED",
+      status: 409,
+    });
+  });
+
+  it("maps an authoritative P2002 slug race without exposing database details", async () => {
+    const { service, prisma } = context;
+
+    prisma.$transaction.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError("unique slug", {
+        clientVersion: "test",
+        code: "P2002",
+        meta: { target: ["slug"] },
+      }),
+    );
+
+    await expect(service.register(validRegistration)).rejects.toMatchObject({
+      code: "ORGANIZATION_SLUG_CONFLICT",
+      status: 409,
+    });
+  });
+
+  it("clears a stale selected tenant before refresh can reissue it", async () => {
+    const { service, prisma, sessions } = context;
+
+    prisma.organizationMembership.findFirst.mockResolvedValueOnce(null);
+
+    const record = await service.revalidateSessionTenant({
+      sessionId: "session-1",
+      userId: "user-1",
+      activeOrganizationId: "org-suspended",
+      activeMembershipId: "membership-suspended",
+      role: "HR_MANAGER",
+      refreshTokenHash: "hash",
+      createdAt: new Date().toISOString(),
+      lastRefreshedAt: new Date().toISOString(),
+      absoluteExpiresAt: new Date().toISOString(),
+      userAgentHash: null,
+    });
+
+    expect(record.activeOrganizationId).toBeNull();
+    expect(sessions.setActiveOrganization).toHaveBeenCalledWith("session-1", {
+      organizationId: null,
+      membershipId: null,
+      role: null,
     });
   });
 

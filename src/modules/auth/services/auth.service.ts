@@ -2,6 +2,7 @@ import { HttpStatus, Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import type { User } from "@prisma/client";
 import { PrismaService } from "@/database/prisma.service.js";
+import { isPrismaUniqueViolationOn } from "@/common/utils/prisma.js";
 import { AuthException } from "@/modules/auth/auth.exception.js";
 import {
   AUTH_ERROR_CODES,
@@ -12,6 +13,7 @@ import type {
   RequestPrincipal,
   SafeMembership,
   SafeUser,
+  SessionRecord,
 } from "@/modules/auth/types/auth.types.js";
 import {
   generateOpaqueToken,
@@ -19,6 +21,8 @@ import {
   normalizeEmail,
   slugifyOrganization,
 } from "@/modules/auth/utils/auth.utils.js";
+import { activeTenantMembershipWhere } from "@/modules/auth/utils/tenant-access.utils.js";
+import { hoursFromNow, isExpired, minutesFromNow } from "@/common/utils/date.js";
 import { AuditService } from "@/modules/auth/services/audit.service.js";
 import { PasswordService } from "@/modules/auth/services/password.service.js";
 import { SessionService, type CreatedSession } from "@/modules/auth/services/session.service.js";
@@ -31,9 +35,6 @@ export type RegistrationInput = {
   email: string;
   password: string;
 };
-
-const hoursFromNow = (hours: number): Date => new Date(Date.now() + hours * 3_600_000);
-const minutesFromNow = (minutes: number): Date => new Date(Date.now() + minutes * 60_000);
 
 @Injectable()
 export class AuthService {
@@ -59,7 +60,7 @@ export class AuthService {
 
   async activeMemberships(userId: string): Promise<SafeMembership[]> {
     const memberships = await this.prisma.organizationMembership.findMany({
-      where: { userId, status: "ACTIVE" },
+      where: activeTenantMembershipWhere({ userId }),
       include: { organization: true },
       orderBy: { createdAt: "asc" },
     });
@@ -114,33 +115,59 @@ export class AuthService {
     const slug = await this.uniqueOrgSlug(input.organizationName);
     const rawToken = generateOpaqueToken();
 
-    const created = await this.prisma.$transaction(async (tx) => {
-      const user = await tx.user.create({
-        data: {
-          email,
-          passwordHash,
-          firstName: input.firstName.trim(),
-          lastName: input.lastName.trim(),
-        },
-      });
-      const organization = await tx.organization.create({
-        data: { name: input.organizationName.trim(), slug },
-      });
-      const membership = await tx.organizationMembership.create({
-        data: { organizationId: organization.id, userId: user.id, role: "TENANT_OWNER" },
-      });
+    let created: {
+      user: User;
+      organization: { id: string; name: string; slug: string };
+      membership: { id: string };
+    };
 
-      await tx.authActionToken.create({
-        data: {
-          userId: user.id,
-          type: "EMAIL_VERIFICATION",
-          tokenHash: hashOpaqueToken(rawToken),
-          expiresAt: hoursFromNow(EMAIL_VERIFICATION_TTL_HOURS),
-        },
-      });
+    try {
+      created = await this.prisma.$transaction(async (tx) => {
+        const user = await tx.user.create({
+          data: {
+            email,
+            passwordHash,
+            firstName: input.firstName.trim(),
+            lastName: input.lastName.trim(),
+          },
+        });
+        const organization = await tx.organization.create({
+          data: { name: input.organizationName.trim(), slug },
+        });
+        const membership = await tx.organizationMembership.create({
+          data: { organizationId: organization.id, userId: user.id, role: "TENANT_OWNER" },
+        });
 
-      return { user, organization, membership };
-    });
+        await tx.authActionToken.create({
+          data: {
+            userId: user.id,
+            type: "EMAIL_VERIFICATION",
+            tokenHash: hashOpaqueToken(rawToken),
+            expiresAt: hoursFromNow(EMAIL_VERIFICATION_TTL_HOURS),
+          },
+        });
+
+        return { user, organization, membership };
+      });
+    } catch (error) {
+      if (isPrismaUniqueViolationOn(error, "email")) {
+        throw new AuthException(
+          "EMAIL_ALREADY_REGISTERED",
+          "An account with this email already exists.",
+          HttpStatus.CONFLICT,
+        );
+      }
+
+      if (isPrismaUniqueViolationOn(error, "slug")) {
+        throw new AuthException(
+          "ORGANIZATION_SLUG_CONFLICT",
+          "Organization registration could not be completed. Try again.",
+          HttpStatus.CONFLICT,
+        );
+      }
+
+      throw error;
+    }
 
     // DB transaction is closed before sending email (§48).
     await this.email.sendVerificationEmail(email, this.verificationLink(rawToken));
@@ -190,7 +217,7 @@ export class AuthService {
       );
     }
 
-    if (record.expiresAt.getTime() < Date.now()) {
+    if (isExpired(record.expiresAt)) {
       throw new AuthException(
         AUTH_ERROR_CODES.EMAIL_VERIFICATION_TOKEN_EXPIRED,
         "This verification link has expired.",
@@ -377,7 +404,7 @@ export class AuthService {
       );
     }
 
-    if (record.expiresAt.getTime() < Date.now()) {
+    if (isExpired(record.expiresAt)) {
       throw new AuthException(
         AUTH_ERROR_CODES.PASSWORD_RESET_TOKEN_EXPIRED,
         "This reset link has expired.",
@@ -410,6 +437,46 @@ export class AuthService {
       targetUserId: record.userId,
       requestId,
     });
+  }
+
+  /**
+   * Refresh tokens outlive an access JWT, so a session's selected tenant must
+   * be checked again before issuing a new access token. A suspended tenant is
+   * cleared rather than copied into the refreshed session.
+   */
+  async revalidateSessionTenant(record: SessionRecord): Promise<SessionRecord> {
+    if (!record.activeOrganizationId || !record.activeMembershipId) {
+      return record;
+    }
+
+    const membership = await this.prisma.organizationMembership.findFirst({
+      where: activeTenantMembershipWhere({
+        id: record.activeMembershipId,
+        organizationId: record.activeOrganizationId,
+        userId: record.userId,
+      }),
+      select: { id: true },
+    });
+
+    if (membership) {
+      return record;
+    }
+
+    const cleared = await this.sessions.setActiveOrganization(record.sessionId, {
+      organizationId: null,
+      membershipId: null,
+      role: null,
+    });
+
+    if (!cleared) {
+      throw new AuthException(
+        AUTH_ERROR_CODES.SESSION_REVOKED,
+        "Your session is no longer valid.",
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+
+    return cleared;
   }
 
   async me(principal: RequestPrincipal) {
@@ -450,7 +517,10 @@ export class AuthService {
     requestId?: string,
   ) {
     const membership = await this.prisma.organizationMembership.findFirst({
-      where: { userId: principal.userId, organizationId, status: "ACTIVE" },
+      where: activeTenantMembershipWhere({
+        userId: principal.userId,
+        organizationId,
+      }),
       include: { organization: true },
     });
 

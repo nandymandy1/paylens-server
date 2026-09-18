@@ -34,7 +34,7 @@ const createHarness = (inviterRole: MembershipRoleName) => {
       organizationId: "org-1",
       role: inviterRole,
       status: "ACTIVE",
-      organization: { id: "org-1", name: "Acme" },
+      organization: { id: "org-1", name: "Acme", status: "ACTIVE" },
     },
   ];
   const users: Record<string, unknown>[] = [
@@ -99,7 +99,10 @@ const createHarness = (inviterRole: MembershipRoleName) => {
           return null;
         }
 
-        return { ...invitation, organization: { id: "org-1", name: "Acme" } };
+        return {
+          ...invitation,
+          organization: { id: "org-1", name: "Acme", status: "ACTIVE" },
+        };
       }),
       findFirst: vi.fn(
         async ({ where }: { where: Record<string, string> }) =>
@@ -176,8 +179,17 @@ const createHarness = (inviterRole: MembershipRoleName) => {
         return user;
       }),
     },
+    organization: {
+      findFirst: vi.fn(async ({ where }: { where: { id: string; status: string } }) =>
+        where.id === "org-1" && where.status === "ACTIVE" ? { id: "org-1" } : null,
+      ),
+    },
     $transaction: vi.fn(async (callback: (tx: unknown) => Promise<unknown>) =>
       callback({
+        organization: {
+          findFirst: (args: never) =>
+            (prisma.organization.findFirst as (...params: never[]) => Promise<unknown>)(args),
+        },
         organizationInvitation: {
           updateMany: (args: never) =>
             (prisma.organizationInvitation.updateMany as (...params: never[]) => Promise<unknown>)(
@@ -299,6 +311,44 @@ describe("InvitationService permissions", () => {
     await expect(service.preview("raw-invite-token")).rejects.toMatchObject({
       code: "INVITATION_EXPIRED",
     });
+  });
+
+  it("rejects invitation creation and preview when the organization is suspended", async () => {
+    const harness = createHarness("TENANT_OWNER");
+
+    harness.prisma.organizationMembership.findFirst.mockResolvedValueOnce(null);
+
+    await expect(
+      harness.service.invite(principalFor("TENANT_OWNER"), "employee@acme.example", "EMPLOYEE"),
+    ).rejects.toMatchObject({ code: "MEMBERSHIP_REQUIRED" });
+
+    await harness.service.invite(principalFor("TENANT_OWNER"), "employee@acme.example", "EMPLOYEE");
+    harness.prisma.organizationInvitation.findUnique.mockResolvedValueOnce({
+      ...harness.invitations[0],
+      organization: { id: "org-1", name: "Acme", status: "SUSPENDED" },
+    });
+
+    await expect(harness.service.preview("raw-invite-token")).rejects.toMatchObject({
+      code: "INVITATION_INVALID",
+    });
+  });
+
+  it("rejects authenticated and new-user acceptance transactionally for a suspended organization", async () => {
+    const harness = createHarness("TENANT_OWNER");
+
+    await harness.service.invite(principalFor("TENANT_OWNER"), "new@acme.example", "EMPLOYEE");
+    harness.prisma.organization.findFirst.mockResolvedValue(null);
+
+    await expect(
+      harness.service.acceptAsNewUser(
+        "raw-invite-token",
+        { firstName: "New", lastName: "Hire", password: "correct horse battery staple" },
+        undefined,
+      ),
+    ).rejects.toMatchObject({ code: "INVITATION_INVALID" });
+    expect(harness.users).toHaveLength(1);
+    expect(harness.invitations[0].acceptedAt).toBeNull();
+    expect(harness.sessions.createSession).not.toHaveBeenCalled();
   });
 
   it("accepts for a new credentials user and marks the email verified", async () => {

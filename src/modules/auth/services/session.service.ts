@@ -23,6 +23,7 @@ import {
   CONSUME_OAUTH_STATE_SCRIPT,
   SWITCH_ORGANIZATION_SCRIPT,
 } from "@/modules/auth/constants/redis.constant.js";
+import { secondsFromNow } from "@/common/utils/date.js";
 
 export type CreatedSession = {
   sessionId: string;
@@ -75,7 +76,7 @@ export class SessionService {
       refreshTokenHash: hashOpaqueToken(secret),
       createdAt: now,
       lastRefreshedAt: now,
-      absoluteExpiresAt: new Date(Date.now() + this.refreshTtlSeconds * 1000).toISOString(),
+      absoluteExpiresAt: secondsFromNow(this.refreshTtlSeconds).toISOString(),
       userAgentHash: options.userAgent
         ? createHash("sha256").update(options.userAgent).digest("hex")
         : null,

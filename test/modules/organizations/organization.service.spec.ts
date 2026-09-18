@@ -140,11 +140,12 @@ const createHarness = () => {
     setActiveOrganization: vi.fn(async () => null),
     getSession: vi.fn(async () => null),
     accessTokenFor: vi.fn(() => "access"),
+    revokeAllUserSessions: vi.fn(async () => undefined),
   };
   const audit = { record: vi.fn(async () => undefined) };
   const service = new OrganizationService(prisma as never, sessions as never, audit as never);
 
-  return { service, prisma, memberships, users };
+  return { service, prisma, memberships, users, sessions };
 };
 
 describe("OrganizationService", () => {
@@ -285,10 +286,31 @@ describe("OrganizationService", () => {
   });
 
   it("lets the owner change a non-owner role", async () => {
-    const { service } = createHarness();
+    const { service, sessions } = createHarness();
     const updated = await service.changeRole(ownerPrincipal, "membership-emp", "MANAGER");
 
     expect(updated.role).toBe("MANAGER");
+    // Stale Redis authorization must die with the old role.
+    expect(sessions.revokeAllUserSessions).toHaveBeenCalledWith("user-emp");
+  });
+
+  it("selects member user fields instead of including whole user records", async () => {
+    const { service, prisma } = createHarness();
+
+    await service.members(ownerPrincipal);
+
+    const args = (prisma.organizationMembership.findMany.mock.calls as unknown[][])[0]?.[0] as {
+      select?: unknown;
+      include?: unknown;
+    };
+
+    expect(args.include).toBeUndefined();
+    expect(args.select).toMatchObject({
+      id: true,
+      role: true,
+      status: true,
+      user: { select: { id: true, email: true, firstName: true, lastName: true } },
+    });
   });
 
   it("forbids HR_ADMIN role changes and owner grant/demotion", async () => {

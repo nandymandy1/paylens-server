@@ -7,10 +7,11 @@ import {
 import { AuthController } from "@/modules/auth/controllers/auth.controller.js";
 
 const createController = () => {
-  const auth = {};
+  const auth = { revalidateSessionTenant: vi.fn(async (record) => record) };
   const sessions = {
     revokeSession: vi.fn(async () => undefined),
     refresh: vi.fn(),
+    accessTokenFor: vi.fn((record) => record.accessToken ?? "fresh-access"),
   };
   const invitations = {};
   const google = {};

@@ -25,6 +25,7 @@ const createHarness = (
       revokedAt: null,
       acceptedAt: null,
       expiresAt: new Date(Date.now() + 86_400_000),
+      organization: { status: "ACTIVE" },
     },
   ];
 
@@ -109,6 +110,11 @@ const createHarness = (
         return membership;
       }),
     },
+    organization: {
+      findFirst: vi.fn(async ({ where }: { where: { id: string; status: string } }) =>
+        where.id === "org-1" && where.status === "ACTIVE" ? { id: "org-1" } : null,
+      ),
+    },
     $transaction: vi.fn(async (callback: (tx: unknown) => Promise<unknown>) => {
       const invitationSnapshot = structuredClone(invitations);
       const membershipSnapshot = structuredClone(memberships);
@@ -124,6 +130,10 @@ const createHarness = (
               (
                 prisma.organizationInvitation.updateMany as (...params: never[]) => Promise<unknown>
               )(args),
+          },
+          organization: {
+            findFirst: (args: never) =>
+              (prisma.organization.findFirst as (...params: never[]) => Promise<unknown>)(args),
           },
           organizationMembership: {
             findUnique: (args: never) =>
@@ -302,6 +312,31 @@ describe("GoogleService", () => {
       }),
     ).rejects.toMatchObject({ code: "ACCOUNT_SUSPENDED" });
     expect(harness.invitations[0].acceptedAt).toBeNull();
+  });
+
+  it("rejects a suspended organization invitation without consuming it or creating a session", async () => {
+    const harness = createHarness({
+      state: {
+        nonce: "nonce-1",
+        redirectTo: "/dashboard",
+        invitationId: "invitation-1",
+        createdAt: new Date().toISOString(),
+      },
+    });
+
+    harness.prisma.organization.findFirst.mockResolvedValueOnce(null);
+
+    await expect(
+      harness.service.callback({
+        code: "code",
+        state: "state",
+        browserState: "state",
+        userAgent: undefined,
+      }),
+    ).rejects.toMatchObject({ code: "INVITATION_INVALID" });
+    expect(harness.invitations[0].acceptedAt).toBeNull();
+    expect(harness.memberships).toHaveLength(0);
+    expect(harness.sessions.createSession).not.toHaveBeenCalled();
   });
 
   it("keeps the invitation usable when membership creation fails", async () => {

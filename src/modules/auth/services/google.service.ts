@@ -11,10 +11,12 @@ import {
   getSafeRedirectPath,
   normalizeEmail,
 } from "@/modules/auth/utils/auth.utils.js";
+import { activeOrganizationWhere } from "@/modules/auth/utils/tenant-access.utils.js";
 import { AuditService } from "@/modules/auth/services/audit.service.js";
 import { AuthService } from "@/modules/auth/services/auth.service.js";
 import { GoogleOidcClient } from "@/modules/auth/services/google-oidc.client.js";
 import { SessionService, type CreatedSession } from "@/modules/auth/services/session.service.js";
+import { isExpired } from "@/common/utils/date.js";
 
 @Injectable()
 export class GoogleService {
@@ -48,13 +50,15 @@ export class GoogleService {
       // Validate early so the OAuth round-trip never starts from a dead invitation.
       const invitation = await this.prisma.organizationInvitation.findUnique({
         where: { id: options.invitationId },
+        include: { organization: { select: { status: true } } },
       });
 
       if (
         !invitation ||
         invitation.revokedAt ||
         invitation.acceptedAt ||
-        invitation.expiresAt.getTime() < Date.now()
+        isExpired(invitation.expiresAt) ||
+        invitation.organization.status !== "ACTIVE"
       ) {
         throw new AuthException(
           AUTH_ERROR_CODES.INVITATION_INVALID,
@@ -294,8 +298,21 @@ export class GoogleService {
         !invitation ||
         invitation.revokedAt ||
         invitation.acceptedAt ||
-        invitation.expiresAt.getTime() < Date.now()
+        isExpired(invitation.expiresAt)
       ) {
+        throw new AuthException(
+          AUTH_ERROR_CODES.INVITATION_INVALID,
+          "This invitation is no longer valid.",
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+
+      const organization = await tx.organization.findFirst({
+        where: { id: invitation.organizationId, ...activeOrganizationWhere() },
+        select: { id: true },
+      });
+
+      if (!organization) {
         throw new AuthException(
           AUTH_ERROR_CODES.INVITATION_INVALID,
           "This invitation is no longer valid.",

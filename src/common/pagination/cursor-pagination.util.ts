@@ -1,4 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
+import { isRecord } from "@/common/utils/object.js";
 import {
   CURSOR_VERSION,
   DEFAULT_CURSOR_PAGE_LIMIT,
@@ -22,9 +23,6 @@ const invalidLimit = (): BadRequestException =>
     code: "INVALID_PAGINATION_LIMIT",
     message: "Invalid pagination limit.",
   });
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 export const encodeCursor = <TPayload>(payload: TPayload): string =>
   Buffer.from(JSON.stringify({ v: CURSOR_VERSION, data: payload }), "utf8").toString("base64url");

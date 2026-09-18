@@ -17,6 +17,8 @@ import { DatabaseModule } from "@/database/database.module.js";
 import { HealthModule } from "@/modules/health/health.module.js";
 import { AuthModule } from "@/modules/auth/auth.module.js";
 import { EmailModule } from "@/modules/email/email.module.js";
+import { DepartmentsModule } from "@/modules/departments/departments.module.js";
+import { EmployeesModule } from "@/modules/employees/employees.module.js";
 import { OrganizationsModule } from "@/modules/organizations/organizations.module.js";
 import { QueueModule } from "@/queue/queue.module.js";
 import { RedisModule } from "@/redis/redis.module.js";
@@ -50,6 +52,8 @@ import { RedisModule } from "@/redis/redis.module.js";
     EmailModule,
     AuthModule,
     OrganizationsModule,
+    DepartmentsModule,
+    EmployeesModule,
     HealthModule,
   ],
   providers: [

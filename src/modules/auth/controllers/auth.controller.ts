@@ -165,10 +165,14 @@ export class AuthController {
 
     try {
       const result = await this.sessions.refresh(presented.sessionId, presented.secret);
+      const record = await this.auth.revalidateSessionTenant(result.record);
 
       setAuthCookies(
         res,
-        { accessToken: result.accessToken, refreshToken: result.refreshToken },
+        {
+          accessToken: this.sessions.accessTokenFor(record),
+          refreshToken: result.refreshToken,
+        },
         this.config,
       );
 

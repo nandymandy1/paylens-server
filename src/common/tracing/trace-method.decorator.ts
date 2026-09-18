@@ -1,3 +1,4 @@
+import { getErrorMetadata as errorMetadata } from "@/common/utils/error.js";
 import { ExecutionTraceService } from "./execution-trace.service.js";
 
 type TraceableInstance = {
@@ -6,12 +7,6 @@ type TraceableInstance = {
     name: string;
   };
 };
-
-function errorMetadata(error: unknown): Record<string, string> {
-  return {
-    name: error instanceof Error ? error.name : "UnknownError",
-  };
-}
 
 export function TraceMethod(): MethodDecorator {
   return (target: object, propertyKey: string | symbol, descriptor: PropertyDescriptor) => {

@@ -9,6 +9,7 @@ import type { RequestPrincipal } from "@/modules/auth/types/auth.types.js";
 import { slugifyOrganization, generateOpaqueToken } from "@/modules/auth/utils/auth.utils.js";
 import { AuditService } from "@/modules/auth/services/audit.service.js";
 import { SessionService } from "@/modules/auth/services/session.service.js";
+import { activeTenantMembershipWhere } from "@/modules/auth/utils/tenant-access.utils.js";
 
 @Injectable()
 export class OrganizationService {
@@ -28,12 +29,11 @@ export class OrganizationService {
     }
 
     const membership = await this.prisma.organizationMembership.findFirst({
-      where: {
+      where: activeTenantMembershipWhere({
         id: principal.membershipId,
         userId: principal.userId,
         organizationId: principal.organizationId,
-        status: "ACTIVE",
-      },
+      }),
       include: { organization: true },
     });
 
@@ -131,7 +131,13 @@ export class OrganizationService {
 
     const members = await this.prisma.organizationMembership.findMany({
       where: { organizationId: membership.organizationId },
-      include: { user: true },
+      select: {
+        id: true,
+        role: true,
+        status: true,
+        createdAt: true,
+        user: { select: { id: true, email: true, firstName: true, lastName: true } },
+      },
       orderBy: { createdAt: "asc" },
     });
 
@@ -231,6 +237,14 @@ export class OrganizationService {
       where: { id: target.id },
       data: { role },
     });
+
+    // Security-first: the target's active Redis sessions still carry the old
+    // role. Revoke them all so stale authorization can never be reused. The
+    // target signs in again; the actor's own session is untouched unless the
+    // actor changed their own membership (impossible for TENANT_OWNER here).
+    if (target.userId !== principal.userId) {
+      await this.sessions.revokeAllUserSessions(target.userId);
+    }
 
     await this.audit.record("MEMBERSHIP_ROLE_CHANGED", {
       actorUserId: principal.userId,

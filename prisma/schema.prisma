@@ -216,6 +216,7 @@ model Department {
   employees    Employee[]
 
   @@unique([organizationId, code])
+  @@unique([organizationId, id])
   @@index([organizationId, name, id])
 }
 
@@ -238,7 +239,7 @@ model Employee {
   updatedAt        DateTime       @updatedAt
 
   organization        Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  department          Department            @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  department          Department            @relation(fields: [organizationId, departmentId], references: [organizationId, id], onDelete: Restrict)
   currentCompensation EmployeeCompensation?
   compensationHistory CompensationHistory[]
 

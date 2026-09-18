@@ -1,13 +1,8 @@
 import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from "@nestjs/common";
 import type { Observable } from "rxjs";
 import { catchError, tap } from "rxjs/operators";
+import { getErrorMetadata as errorMetadata } from "@/common/utils/error.js";
 import { ExecutionTraceService } from "./execution-trace.service.js";
-
-function errorMetadata(error: unknown): Record<string, string> {
-  return {
-    name: error instanceof Error ? error.name : "UnknownError",
-  };
-}
 
 @Injectable()
 export class ControllerTraceInterceptor implements NestInterceptor {

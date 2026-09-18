@@ -14,12 +14,15 @@ import {
   hashOpaqueToken,
   normalizeEmail,
 } from "@/modules/auth/utils/auth.utils.js";
+import {
+  activeOrganizationWhere,
+  activeTenantMembershipWhere,
+} from "@/modules/auth/utils/tenant-access.utils.js";
 import { AuditService } from "@/modules/auth/services/audit.service.js";
 import { PasswordService } from "@/modules/auth/services/password.service.js";
 import { SessionService, type CreatedSession } from "@/modules/auth/services/session.service.js";
 import { EmailService } from "@/modules/email/email.service.js";
-
-const daysFromNow = (days: number): Date => new Date(Date.now() + days * 86_400_000);
+import { daysFromNow, isExpired } from "@/common/utils/date.js";
 
 @Injectable()
 export class InvitationService {
@@ -42,12 +45,11 @@ export class InvitationService {
     }
 
     const membership = await this.prisma.organizationMembership.findFirst({
-      where: {
+      where: activeTenantMembershipWhere({
         id: principal.membershipId,
         userId: principal.userId,
         organizationId: principal.organizationId,
-        status: "ACTIVE",
-      },
+      }),
       include: { organization: true },
     });
 
@@ -151,11 +153,19 @@ export class InvitationService {
       );
     }
 
-    if (invitation.expiresAt.getTime() < Date.now()) {
+    if (isExpired(invitation.expiresAt)) {
       throw new AuthException(
         AUTH_ERROR_CODES.INVITATION_EXPIRED,
         "This invitation has expired.",
         HttpStatus.GONE,
+      );
+    }
+
+    if (invitation.organization.status !== "ACTIVE") {
+      throw new AuthException(
+        AUTH_ERROR_CODES.INVITATION_INVALID,
+        "This invitation link is invalid.",
+        HttpStatus.BAD_REQUEST,
       );
     }
 
@@ -202,6 +212,19 @@ export class InvitationService {
     }
 
     const result = await this.prisma.$transaction(async (tx) => {
+      const organization = await tx.organization.findFirst({
+        where: { id: invitation.organizationId, ...activeOrganizationWhere() },
+        select: { id: true },
+      });
+
+      if (!organization) {
+        throw new AuthException(
+          AUTH_ERROR_CODES.INVITATION_INVALID,
+          "This invitation is no longer valid.",
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+
       const consumed = await tx.organizationInvitation.updateMany({
         where: { id: invitation.id, acceptedAt: null, revokedAt: null },
         data: { acceptedAt: new Date() },
@@ -263,6 +286,19 @@ export class InvitationService {
     const passwordHash = await this.passwords.hash(input.password);
 
     const created = await this.prisma.$transaction(async (tx) => {
+      const organization = await tx.organization.findFirst({
+        where: { id: invitation.organizationId, ...activeOrganizationWhere() },
+        select: { id: true },
+      });
+
+      if (!organization) {
+        throw new AuthException(
+          AUTH_ERROR_CODES.INVITATION_INVALID,
+          "This invitation is no longer valid.",
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+
       const consumed = await tx.organizationInvitation.updateMany({
         where: { id: invitation.id, acceptedAt: null, revokedAt: null },
         data: { acceptedAt: new Date() },

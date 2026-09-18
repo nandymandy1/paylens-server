@@ -189,7 +189,29 @@ describe("workforce and compensation database invariants", () => {
     const { employee } = await createEmployeeFixture();
     const effectiveFrom = new Date("2025-01-01T00:00:00.000Z");
 
-    await expect(
+    // This Prisma version surfaces raw PostgreSQL CHECK violations (23514)
+    // as PrismaClientUnknownRequestError instead of mapping them to P2004.
+    // Assert the constraint-safe rejection either way — the invariant (no
+    // negative salary, no non-positive version) is what matters.
+    const rejectsByCheckConstraint = async (operation: Promise<unknown>) => {
+      await expect(operation).rejects.toSatisfy((error: unknown) => {
+        if (typeof error !== "object" || error === null) {
+          return false;
+        }
+
+        const code = (error as { code?: unknown }).code;
+
+        if (code === "P2004") {
+          return true;
+        }
+
+        const message = error instanceof Error ? error.message : String(error);
+
+        return message.includes("23514");
+      });
+    };
+
+    await rejectsByCheckConstraint(
       prisma.employeeCompensation.create({
         data: {
           employeeId: employee.id,
@@ -198,8 +220,8 @@ describe("workforce and compensation database invariants", () => {
           effectiveFrom,
         },
       }),
-    ).rejects.toMatchObject({ code: "P2004" });
-    await expect(
+    );
+    await rejectsByCheckConstraint(
       prisma.employeeCompensation.create({
         data: {
           employeeId: employee.id,
@@ -209,8 +231,8 @@ describe("workforce and compensation database invariants", () => {
           version: 0,
         },
       }),
-    ).rejects.toMatchObject({ code: "P2004" });
-    await expect(
+    );
+    await rejectsByCheckConstraint(
       prisma.compensationHistory.create({
         data: {
           employeeId: employee.id,
@@ -221,7 +243,7 @@ describe("workforce and compensation database invariants", () => {
           reason: "INITIAL",
         },
       }),
-    ).rejects.toMatchObject({ code: "P2004" });
+    );
   });
 
   it("retains compensation history and nulls its actor when the user is deleted", async () => {

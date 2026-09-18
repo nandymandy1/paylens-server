@@ -1,7 +1,8 @@
 import { createHash, randomBytes } from "node:crypto";
 import { DEFAULT_SAFE_REDIRECT } from "@/modules/auth/constants/auth.constants.js";
+import { normalizeEmail } from "@/common/utils/string.js";
 
-export const normalizeEmail = (email: string): string => email.trim().toLowerCase();
+export { normalizeEmail };
 
 /** High-entropy opaque token for emails/invitations/refresh secrets. */
 export const generateOpaqueToken = (bytes = 32): string => randomBytes(bytes).toString("hex");
