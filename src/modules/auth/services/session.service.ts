@@ -16,13 +16,16 @@ import type { MembershipRoleName } from "@/modules/auth/constants/auth.constants
 import {
   generateOpaqueToken,
   hashOpaqueToken,
+  assertPipelineSucceeded,
   oauthStateKey,
+  sessionBlockKey,
   sessionKey,
   userSessionsKey,
 } from "@/modules/auth/utils/auth.utils.js";
 import {
   ROTATE_SCRIPT,
   CONSUME_OAUTH_STATE_SCRIPT,
+  CREATE_SESSION_SCRIPT,
   SWITCH_ORGANIZATION_SCRIPT,
 } from "@/modules/auth/constants/redis.constant.js";
 import { secondsFromNow } from "@/common/utils/date.js";
@@ -41,6 +44,9 @@ export type CreatedSession = {
   "setActiveOrganization",
   "revokeSession",
   "revokeAllUserSessions",
+  "blockSessionCreation",
+  "unblockSessionCreation",
+  "isSessionCreationBlocked",
   "saveOAuthState",
   "consumeOAuthState",
 ])
@@ -95,14 +101,26 @@ export class SessionService {
         : null,
     };
 
-    await this.redis.set(
+    // Atomic block-check + session registration (single Lua script): either
+    // the block wins (BLOCKED, nothing written) or the session wins (OK).
+    const created = (await this.redis.eval(
+      CREATE_SESSION_SCRIPT,
+      3,
       sessionKey(sessionId),
+      userSessionsKey(options.userId),
+      sessionBlockKey(options.userId),
       JSON.stringify(record),
-      "EX",
-      this.refreshTtlSeconds,
-    );
-    await this.redis.sadd(userSessionsKey(options.userId), sessionId);
-    await this.redis.expire(userSessionsKey(options.userId), this.refreshTtlSeconds);
+      sessionId,
+      String(this.refreshTtlSeconds),
+    )) as string;
+
+    if (created === "BLOCKED") {
+      throw new AuthException(
+        AUTH_ERROR_CODES.SESSION_REVOKED,
+        "Session creation is temporarily blocked for this user.",
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
 
     return {
       sessionId,
@@ -222,6 +240,40 @@ export class SessionService {
     }
 
     await this.redis.del(userSessionsKey(userId));
+  }
+
+  /**
+   * Temporarily prevents session creation for the given users (SEED-R1
+   * rollback window). Pipelined SETs; blocks carry no TTL and are cleared
+   * explicitly after a successful reseed. Fail closed: never auto-expire.
+   */
+  async blockSessionCreation(userIds: string[]): Promise<void> {
+    if (userIds.length === 0) return;
+
+    const pipeline = this.redis.pipeline();
+
+    for (const userId of userIds) {
+      pipeline.set(sessionBlockKey(userId), "1");
+    }
+
+    // Fail closed: a partially-failed block must surface, never silently pass.
+    assertPipelineSucceeded(await pipeline.exec(), "[auth] session block");
+  }
+
+  async unblockSessionCreation(userIds: string[]): Promise<void> {
+    if (userIds.length === 0) return;
+
+    const pipeline = this.redis.pipeline();
+
+    for (const userId of userIds) {
+      pipeline.del(sessionBlockKey(userId));
+    }
+
+    assertPipelineSucceeded(await pipeline.exec(), "[auth] session unblock");
+  }
+
+  async isSessionCreationBlocked(userId: string): Promise<boolean> {
+    return (await this.redis.exists(sessionBlockKey(userId))) === 1;
   }
 
   async saveOAuthState(state: string, record: OAuthStateRecord): Promise<void> {

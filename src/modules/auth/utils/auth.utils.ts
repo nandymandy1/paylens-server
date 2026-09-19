@@ -52,4 +52,25 @@ export const sessionKey = (sessionId: string): string => `auth:session:${session
 
 export const userSessionsKey = (userId: string): string => `auth:user-sessions:${userId}`;
 
+export const sessionBlockKey = (userId: string): string => `auth:session-block:${userId}`;
+
 export const oauthStateKey = (state: string): string => `auth:oauth-state:${state}`;
+
+/** Fail-closed Redis pipeline check: `exec()` resolves even when individual
+ * commands carry a ReplyError, so every command result must be inspected.
+ * Throws the original command error (or a wrapped failure when exec() itself
+ * returns null). Callers add their own abort context. */
+export const assertPipelineSucceeded = (
+  results: Array<[Error | null, unknown]> | null,
+  operation: string,
+): void => {
+  if (!results) {
+    throw new Error(`${operation}: pipeline returned no results, failing closed`);
+  }
+
+  for (const [error] of results) {
+    if (error) {
+      throw error instanceof Error ? error : new Error(`${operation}: ${String(error)}`);
+    }
+  }
+};

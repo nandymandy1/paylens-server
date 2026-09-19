@@ -3,6 +3,7 @@ import { JwtService } from "@nestjs/jwt";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CONSUME_OAUTH_STATE_SCRIPT,
+  CREATE_SESSION_SCRIPT,
   ROTATE_SCRIPT,
   SWITCH_ORGANIZATION_SCRIPT,
 } from "@/modules/auth/constants/redis.constant.js";
@@ -85,6 +86,36 @@ class FakeRedis {
     return removed;
   }
 
+  async exists(...keys: string[]): Promise<number> {
+    return keys.filter((key) => this.store.has(key) || this.sets.has(key)).length;
+  }
+
+  pipeline(): {
+    set: (key: string, value: string) => void;
+    del: (key: string) => void;
+    exec: () => Promise<Array<[Error | null, unknown]>>;
+  } {
+    const queued: Array<() => Promise<unknown>> = [];
+
+    return {
+      set: (key: string, value: string): void => {
+        queued.push(() => this.set(key, value));
+      },
+      del: (key: string): void => {
+        queued.push(() => this.del(key));
+      },
+      exec: async (): Promise<Array<[Error | null, unknown]>> => {
+        const results: Array<[Error | null, unknown]> = [];
+
+        for (const operation of queued) {
+          results.push([null, await operation()]);
+        }
+
+        return results;
+      },
+    };
+  }
+
   async ttl(cacheKey: string): Promise<number> {
     return this.ttls.get(cacheKey) ?? 100;
   }
@@ -92,10 +123,32 @@ class FakeRedis {
   async eval(
     script: string,
     keyCount: number,
-    key: string,
-    ...args: unknown[]
+    ...rest: unknown[]
   ): Promise<number | string | null> {
-    void keyCount;
+    const keys = (rest as string[]).slice(0, keyCount);
+    const args = (rest as string[]).slice(keyCount);
+    const key = keys[0];
+
+    if (script === CREATE_SESSION_SCRIPT) {
+      const [sessionRedisKey, indexKey, blockKey] = keys;
+      const [recordJson, sessionId, ttlSeconds] = args;
+
+      if (this.store.has(blockKey) || this.sets.has(blockKey)) {
+        return "BLOCKED";
+      }
+
+      this.store.set(sessionRedisKey, recordJson);
+      this.ttls.set(sessionRedisKey, Number(ttlSeconds));
+
+      if (!this.sets.has(indexKey)) {
+        this.sets.set(indexKey, new Set());
+      }
+
+      (this.sets.get(indexKey) as Set<string>).add(sessionId);
+      this.ttls.set(indexKey, Number(ttlSeconds));
+
+      return "OK";
+    }
 
     if (script === CONSUME_OAUTH_STATE_SCRIPT) {
       const raw = this.store.get(key) ?? null;
