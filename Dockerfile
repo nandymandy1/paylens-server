@@ -1,4 +1,4 @@
-FROM node:22-bookworm-slim AS base
+FROM node:24-bookworm-slim AS base
 WORKDIR /app
 RUN apt-get update \
   && apt-get install --yes --no-install-recommends openssl ca-certificates \
@@ -15,7 +15,8 @@ COPY src ./src
 RUN npx prisma generate && npm run build
 
 FROM deps AS prod-deps
-RUN npm prune --omit=dev
+RUN npm prune --omit=dev \
+  && rm -rf node_modules/prisma node_modules/typescript
 
 FROM builder AS migrate
 CMD ["npm", "run", "prisma:migrate"]
