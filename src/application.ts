@@ -19,7 +19,7 @@ export async function createApplication(): Promise<INestApplication> {
   app.use(cookieParser());
   app.enableCors({
     credentials: true,
-    origin: config.getOrThrow<string[]>("app.corsOrigins"),
+    origin: config.getOrThrow<string>("app.corsOrigin"),
   });
   app.setGlobalPrefix("api/v1", { exclude: ["health", "ready"] });
   const document = SwaggerModule.createDocument(

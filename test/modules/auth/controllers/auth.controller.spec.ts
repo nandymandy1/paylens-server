@@ -29,8 +29,6 @@ const createController = () => {
       const values: Record<string, unknown> = {
         "app.authCookieSecure": false,
         "app.authCookieSameSite": "lax",
-        "app.authCookieDomain": "",
-        "app.authAccessTtlSeconds": 900,
         "app.frontendUrl": "http://localhost:3000",
       };
 

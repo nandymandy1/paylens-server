@@ -10,6 +10,7 @@ import { AuthException } from "@/modules/auth/auth.exception.js";
 import {
   AUTH_ERROR_CODES,
   OAUTH_STATE_TTL_SECONDS,
+  REFRESH_TOKEN_TTL_SECONDS,
 } from "@/modules/auth/constants/auth.constants.js";
 import type { OAuthStateRecord, SessionRecord } from "@/modules/auth/types/auth.types.js";
 import type { MembershipRoleName } from "@/modules/auth/constants/auth.constants.js";
@@ -63,7 +64,7 @@ export class SessionService {
   }
 
   private get refreshTtlSeconds(): number {
-    return this.config.getOrThrow<number>("app.authRefreshTtlSeconds");
+    return REFRESH_TOKEN_TTL_SECONDS;
   }
 
   accessTokenFor(record: SessionRecord): string {

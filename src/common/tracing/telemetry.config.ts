@@ -1,9 +1,5 @@
-import {
-  parseBooleanEnvStrict,
-  parseNumberEnv,
-  parseOptionalStringEnv,
-} from "@/common/utils/env.js";
-import { validateOtlpProtocol } from "./telemetry.utils.js";
+import { parseOptionalStringEnv } from "@/common/utils/env.js";
+import { TRACE_SAMPLE_RATIO } from "@/config/runtime.constants.js";
 
 export type TelemetryConfig = {
   enabled: boolean;
@@ -16,40 +12,21 @@ export type TelemetryConfig = {
 };
 
 /**
- * Parse telemetry configuration from environment variables.
- * Called before Nest ConfigModule loads — reads process.env directly.
- *
- * This is the SINGLE SOURCE OF TRUTH for telemetry configuration.
- * app.config.ts and env.validation.ts must consume these values,
- * never re-parse the same env vars with different rules.
+ * Early bootstrap has one optional telemetry setting. The endpoint is the
+ * opt-in switch; absent means no remote exporter or instrumentation setup.
  */
-export function parseTelemetryConfig(env?: Record<string, string | undefined>): TelemetryConfig {
-  const e = env ?? process.env;
-
-  const enabled = parseBooleanEnvStrict(e.OTEL_ENABLED, true, "OTEL_ENABLED");
-  const logsEnabled = parseBooleanEnvStrict(e.OTEL_LOGS_ENABLED, true, "OTEL_LOGS_ENABLED");
-  const metricsEnabled = parseBooleanEnvStrict(
-    e.OTEL_METRICS_ENABLED,
-    enabled,
-    "OTEL_METRICS_ENABLED",
-  );
-  const serviceName = parseOptionalStringEnv(e.OTEL_SERVICE_NAME) ?? "paylens-server";
-  const endpoint = parseOptionalStringEnv(e.OTEL_EXPORTER_OTLP_ENDPOINT);
-  const protocol = validateOtlpProtocol(e.OTEL_EXPORTER_OTLP_PROTOCOL);
-  const traceSampleRatio = parseNumberEnv(e.OTEL_TRACE_SAMPLE_RATIO, {
-    fallback: 1,
-    min: 0,
-    max: 1,
-    name: "OTEL_TRACE_SAMPLE_RATIO",
-  });
+export function parseTelemetryConfig(
+  env: Record<string, string | undefined> = process.env,
+): TelemetryConfig {
+  const endpoint = parseOptionalStringEnv(env.OTEL_EXPORTER_OTLP_ENDPOINT);
 
   return {
-    enabled,
-    serviceName,
+    enabled: Boolean(endpoint),
+    serviceName: "paylens-server",
     endpoint,
-    protocol,
-    traceSampleRatio,
-    logsEnabled,
-    metricsEnabled,
+    protocol: "http/protobuf",
+    traceSampleRatio: TRACE_SAMPLE_RATIO,
+    logsEnabled: true,
+    metricsEnabled: true,
   };
 }

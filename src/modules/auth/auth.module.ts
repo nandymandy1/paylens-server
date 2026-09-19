@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { JwtModule } from "@nestjs/jwt";
+import { ACCESS_TOKEN_TTL_SECONDS } from "@/modules/auth/constants/auth.constants.js";
 import { AuthController } from "@/modules/auth/controllers/auth.controller.js";
 import { OptionalSessionGuard, SessionGuard } from "@/modules/auth/guards/session.guard.js";
 import { AuditService } from "@/modules/auth/services/audit.service.js";
@@ -17,7 +18,7 @@ import { SessionService } from "@/modules/auth/services/session.service.js";
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         secret: config.getOrThrow<string>("app.authAccessTokenSecret"),
-        signOptions: { expiresIn: config.getOrThrow<number>("app.authAccessTtlSeconds") },
+        signOptions: { expiresIn: ACCESS_TOKEN_TTL_SECONDS },
       }),
     }),
   ],

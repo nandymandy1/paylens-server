@@ -23,12 +23,11 @@ vi.mock("@/common/tracing/telemetry.js", () => ({
 
 const { ExecutionTraceService } = await import("@/common/tracing/execution-trace.service.js");
 
-function createTraceService(overrides?: { slowQueryMs?: number; dbQueryLogEnabled?: boolean }) {
+function createTraceService(overrides?: { slowQueryMs?: number }) {
   const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
   const config = {
     getOrThrow: (key: string) => {
       if (key === "app.slowQueryMs") return overrides?.slowQueryMs ?? 100;
-      if (key === "app.dbQueryLogEnabled") return overrides?.dbQueryLogEnabled ?? true;
 
       return true;
     },
@@ -97,12 +96,12 @@ describe("Prisma query logging", () => {
     expect(call).not.toHaveProperty("parameters");
   });
 
-  it("respects dbQueryLogEnabled=false for normal queries", () => {
-    const { logger, trace } = createTraceService({ dbQueryLogEnabled: false });
+  it("uses the logger debug level for normal query diagnostics", () => {
+    const { logger, trace } = createTraceService();
 
     trace.recordDatabaseQuery({ statementType: "SELECT", durationMs: 5 });
 
-    expect(logger.debug).not.toHaveBeenCalled();
+    expect(logger.debug).toHaveBeenCalled();
   });
 });
 

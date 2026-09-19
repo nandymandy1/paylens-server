@@ -38,11 +38,11 @@ export class CsrfOriginMiddleware implements NestMiddleware {
       return;
     }
 
-    const allowed = this.config.get<string[]>("app.corsOrigins") ?? [];
+    const allowed = this.config.get<string>("app.corsOrigin");
     const origin = req.headers.origin;
 
     if (typeof origin === "string" && origin.length > 0) {
-      if (!allowed.includes(origin)) {
+      if (origin !== allowed) {
         throw new HttpException(
           {
             code: AUTH_ERROR_CODES.CSRF_ORIGIN_FORBIDDEN,

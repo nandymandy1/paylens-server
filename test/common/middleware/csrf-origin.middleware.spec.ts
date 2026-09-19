@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { CsrfOriginMiddleware } from "@/common/middleware/csrf-origin.middleware.js";
 
 const createMiddleware = (origins: string[]) => {
-  const config = { get: (key: string) => (key === "app.corsOrigins" ? origins : undefined) };
+  const config = { get: (key: string) => (key === "app.corsOrigin" ? origins[0] : undefined) };
 
   return new CsrfOriginMiddleware(config as never);
 };

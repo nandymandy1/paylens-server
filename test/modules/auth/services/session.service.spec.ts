@@ -231,19 +231,7 @@ class FakeRedis {
 
 const createService = (redis?: FakeRedis) => {
   const jwt = new JwtService({ secret: "test-secret-with-at-least-32-characters!!" });
-  const config = {
-    getOrThrow: (key: string) => {
-      if (key === "app.authRefreshTtlSeconds") {
-        return 1_209_600;
-      }
-
-      if (key === "app.authAccessTtlSeconds") {
-        return 900;
-      }
-
-      throw new Error(`unexpected config key ${key}`);
-    },
-  } as never;
+  const config = {} as never;
 
   const executionTrace = {
     withinSpan: vi.fn(async (_n: string, _a: object, fn: () => Promise<unknown>) => fn()),

@@ -252,7 +252,6 @@ describe("database execution events", () => {
     const config = {
       getOrThrow: (key: string) => {
         if (key === "app.slowQueryMs") return 100;
-        if (key === "app.dbQueryLogEnabled") return true;
 
         return true;
       },

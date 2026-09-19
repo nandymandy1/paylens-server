@@ -6,6 +6,10 @@ export const SESSION_HINT_COOKIE_NAME = "paylens_session_hint";
 
 export const OAUTH_STATE_TTL_SECONDS = 600;
 
+export const ACCESS_TOKEN_TTL_SECONDS = 900;
+
+export const REFRESH_TOKEN_TTL_SECONDS = 1_209_600;
+
 export const OAUTH_STATE_COOKIE_NAME = "paylens_oauth";
 
 export const EMAIL_VERIFICATION_TTL_HOURS = 24;

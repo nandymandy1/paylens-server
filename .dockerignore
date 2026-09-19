@@ -7,3 +7,5 @@ coverage
 test
 graphify-out
 .graphify
+*.log
+.DS_Store

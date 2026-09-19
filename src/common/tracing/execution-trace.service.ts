@@ -12,16 +12,12 @@ type TraceEvent = Record<string, unknown> & { event: string };
 @Injectable()
 export class ExecutionTraceService {
   // Immutable config cached once in constructor — never re-read on hot paths.
-  private readonly executionTraceEnabled: boolean;
-  private readonly dbQueryLogEnabled: boolean;
   private readonly slowQueryMs: number;
 
   constructor(
     private readonly config: ConfigService,
     private readonly logger: PinoLogger,
   ) {
-    this.executionTraceEnabled = this.config.getOrThrow<boolean>("app.executionTraceEnabled");
-    this.dbQueryLogEnabled = this.config.getOrThrow<boolean>("app.dbQueryLogEnabled");
     this.slowQueryMs = this.config.getOrThrow<number>("app.slowQueryMs");
 
     // Log actual telemetry runtime state — no second initialization.
@@ -30,9 +26,6 @@ export class ExecutionTraceService {
     this.logger.info({
       event: "observability.initialized",
       logLevel: this.config.getOrThrow<string>("app.logLevel"),
-      logFormat: this.config.getOrThrow<string>("app.logFormat"),
-      executionTraceEnabled: this.executionTraceEnabled,
-      dbQueryLogEnabled: this.dbQueryLogEnabled,
       slowQueryMs: this.slowQueryMs,
       otelEnabled: telemetry.initialized,
       otelLogsEnabled: telemetry.logsEnabled,
@@ -68,7 +61,6 @@ export class ExecutionTraceService {
   }
 
   debug(event: TraceEvent): void {
-    if (!this.executionTraceEnabled) return;
     this.logger.debug(this.withContext(event));
   }
 
@@ -136,7 +128,7 @@ export class ExecutionTraceService {
         durationMs: event.durationMs,
         thresholdMs: this.slowQueryMs,
       });
-    } else if (this.dbQueryLogEnabled) {
+    } else {
       this.debug({
         event: "db.query.completed",
         statementType: event.statementType ?? "UNKNOWN",

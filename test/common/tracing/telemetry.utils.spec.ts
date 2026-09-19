@@ -3,7 +3,6 @@ import {
   isValidTraceId,
   isValidSpanId,
   buildOtlpSignalUrl,
-  validateOtlpProtocol,
 } from "@/common/tracing/telemetry.utils.js";
 
 describe("isValidTraceId", () => {
@@ -89,39 +88,5 @@ describe("buildOtlpSignalUrl", () => {
 
   it("never produces //v1/", () => {
     expect(buildOtlpSignalUrl("http://localhost:4318", "traces")).not.toContain("//v1/");
-  });
-});
-
-describe("validateOtlpProtocol", () => {
-  it("accepts http/protobuf", () => {
-    expect(validateOtlpProtocol("http/protobuf")).toBe("http/protobuf");
-  });
-
-  it("defaults to http/protobuf for undefined", () => {
-    expect(validateOtlpProtocol(undefined)).toBe("http/protobuf");
-  });
-
-  it("defaults to http/protobuf for empty string", () => {
-    expect(validateOtlpProtocol("")).toBe("http/protobuf");
-  });
-
-  it("defaults to http/protobuf for whitespace-only string", () => {
-    expect(validateOtlpProtocol("   ")).toBe("http/protobuf");
-  });
-
-  it("rejects grpc", () => {
-    expect(() => validateOtlpProtocol("grpc")).toThrow("not supported");
-  });
-
-  it("rejects http/json", () => {
-    expect(() => validateOtlpProtocol("http/json")).toThrow("not supported");
-  });
-
-  it("rejects garbage", () => {
-    expect(() => validateOtlpProtocol("foobar")).toThrow("not supported");
-  });
-
-  it("trims whitespace", () => {
-    expect(validateOtlpProtocol("  http/protobuf  ")).toBe("http/protobuf");
   });
 });

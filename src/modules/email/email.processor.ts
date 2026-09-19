@@ -73,21 +73,11 @@ export class EmailProcessor extends WorkerHost {
   ) {
     super();
 
-    const host = config.getOrThrow<string>("app.smtpHost");
+    const smtpUrl = config.getOrThrow<string>("app.smtpUrl");
 
     this.from = config.getOrThrow<string>("app.emailFrom");
     this.environment = config.getOrThrow<string>("app.environment");
-    this.transporter = host
-      ? createTransport({
-          host,
-          port: config.getOrThrow<number>("app.smtpPort"),
-          secure: config.getOrThrow<boolean>("app.smtpSecure"),
-          auth: {
-            user: config.getOrThrow<string>("app.smtpUser"),
-            pass: config.getOrThrow<string>("app.smtpPassword"),
-          },
-        })
-      : null;
+    this.transporter = smtpUrl ? createTransport(smtpUrl) : null;
   }
 
   async onModuleDestroy(): Promise<void> {
@@ -132,7 +122,7 @@ export class EmailProcessor extends WorkerHost {
                 "messaging.system": "smtp",
                 "messaging.operation": "send",
                 "messaging.destination.name": job.data.type,
-                "email.provider": this.config.getOrThrow<string>("app.smtpHost"),
+                "email.provider": "smtp",
               },
             },
             consumerCtx,

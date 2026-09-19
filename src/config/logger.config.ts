@@ -10,10 +10,7 @@ import { OtlpLogDestination } from "./otlp-log.destination.js";
 // One Pino event is formatted and sanitized once, then fanned out to console
 // and (when configured) OTLP. Business code never emits separate log copies.
 export const buildLoggerModuleOptions = (config: ConfigService): Params => {
-  const logFormat = config.getOrThrow<"json" | "pretty">("app.logFormat");
-  const consoleEnabled = config.getOrThrow<boolean>("app.pinoConsoleEnabled");
-  const otelEnabled = config.getOrThrow<boolean>("app.otelEnabled");
-  const otelLogsEnabled = config.getOrThrow<boolean>("app.otelLogsEnabled");
+  const environment = config.getOrThrow<string>("app.environment");
   const otelEndpoint = config.getOrThrow<string>("app.otelExporterOtlpEndpoint");
 
   const pinoHttp: Options = {
@@ -65,20 +62,18 @@ export const buildLoggerModuleOptions = (config: ConfigService): Params => {
   const streams: LevelStream[] = [];
   const destLevel = config.getOrThrow<string>("app.logLevel");
 
-  if (consoleEnabled) {
-    streams.push({
-      level: destLevel,
-      stream:
-        logFormat === "pretty"
-          ? pino.transport({
-              target: "pino-pretty",
-              options: { colorize: true, translateTime: "HH:MM:ss", ignore: "pid,hostname" },
-            })
-          : pino.destination({ dest: 1, sync: false }),
-    });
-  }
+  streams.push({
+    level: destLevel,
+    stream:
+      environment === "development"
+        ? pino.transport({
+            target: "pino-pretty",
+            options: { colorize: true, translateTime: "HH:MM:ss", ignore: "pid,hostname" },
+          })
+        : pino.destination({ dest: 1, sync: false }),
+  });
 
-  if (otelEnabled && otelLogsEnabled && otelEndpoint) {
+  if (otelEndpoint) {
     streams.push({ level: destLevel, stream: new OtlpLogDestination() });
   }
 

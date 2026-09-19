@@ -2,9 +2,11 @@ import type { ConfigService } from "@nestjs/config";
 import type { Response } from "express";
 import {
   ACCESS_COOKIE_NAME,
+  ACCESS_TOKEN_TTL_SECONDS,
   OAUTH_STATE_COOKIE_NAME,
   OAUTH_STATE_TTL_SECONDS,
   REFRESH_COOKIE_NAME,
+  REFRESH_TOKEN_TTL_SECONDS,
   SESSION_HINT_COOKIE_NAME,
 } from "@/modules/auth/constants/auth.constants.js";
 
@@ -14,7 +16,6 @@ type CookieOptions = {
   sameSite: "strict" | "lax" | "none";
   path: string;
   maxAge?: number;
-  domain?: string;
 };
 
 const baseOptions = (config: ConfigService): CookieOptions => {
@@ -24,11 +25,6 @@ const baseOptions = (config: ConfigService): CookieOptions => {
     sameSite: config.getOrThrow<"strict" | "lax" | "none">("app.authCookieSameSite"),
     path: "/",
   };
-  const domain = config.getOrThrow<string>("app.authCookieDomain");
-
-  if (domain) {
-    options.domain = domain;
-  }
 
   return options;
 };
@@ -42,11 +38,11 @@ export const setAuthCookies = (
 
   res.cookie(ACCESS_COOKIE_NAME, tokens.accessToken, {
     ...base,
-    maxAge: config.getOrThrow<number>("app.authAccessTtlSeconds") * 1000,
+    maxAge: ACCESS_TOKEN_TTL_SECONDS * 1000,
   });
   res.cookie(REFRESH_COOKIE_NAME, tokens.refreshToken, {
     ...base,
-    maxAge: config.getOrThrow<number>("app.authRefreshTtlSeconds") * 1000,
+    maxAge: REFRESH_TOKEN_TTL_SECONDS * 1000,
   });
   // UX-only routing hint: no token, no identity, no role. Backend stays authoritative.
   res.cookie(SESSION_HINT_COOKIE_NAME, "1", {
@@ -54,8 +50,7 @@ export const setAuthCookies = (
     secure: base.secure,
     sameSite: base.sameSite,
     path: "/",
-    maxAge: config.getOrThrow<number>("app.authRefreshTtlSeconds") * 1000,
-    ...(base.domain ? { domain: base.domain } : {}),
+    maxAge: REFRESH_TOKEN_TTL_SECONDS * 1000,
   });
 };
 
@@ -66,22 +61,20 @@ export const setAccessCookieOnly = (
 ): void => {
   res.cookie(ACCESS_COOKIE_NAME, accessToken, {
     ...baseOptions(config),
-    maxAge: config.getOrThrow<number>("app.authAccessTtlSeconds") * 1000,
+    maxAge: ACCESS_TOKEN_TTL_SECONDS * 1000,
   });
 };
 
 export const clearAuthCookies = (res: Response, config: ConfigService): void => {
   const base = baseOptions(config);
-  const domain = base.domain ? { domain: base.domain } : {};
 
-  res.clearCookie(ACCESS_COOKIE_NAME, { ...base, ...domain });
-  res.clearCookie(REFRESH_COOKIE_NAME, { ...base, ...domain });
+  res.clearCookie(ACCESS_COOKIE_NAME, base);
+  res.clearCookie(REFRESH_COOKIE_NAME, base);
   res.clearCookie(SESSION_HINT_COOKIE_NAME, {
     httpOnly: false,
     secure: base.secure,
     sameSite: base.sameSite,
     path: "/",
-    ...domain,
   });
 };
 

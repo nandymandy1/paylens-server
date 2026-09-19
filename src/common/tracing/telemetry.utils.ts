@@ -76,30 +76,3 @@ export const DEFAULT_OTEL_SEVERITY: OtelSeverity = {
   number: SeverityNumber.INFO,
   text: "INFO",
 };
-
-// ---------------------------------------------------------------------------
-// OTLP protocol validation
-// ---------------------------------------------------------------------------
-
-const SUPPORTED_PROTOCOLS = ["http/protobuf"] as const;
-
-export type SupportedProtocol = (typeof SUPPORTED_PROTOCOLS)[number];
-
-/**
- * Validate and normalize the OTLP protocol.
- * Only "http/protobuf" is supported. Missing/undefined defaults to "http/protobuf".
- * Throws on unsupported protocols (grpc, http/json, garbage).
- */
-export function validateOtlpProtocol(value: string | undefined): SupportedProtocol {
-  if (value === undefined || value.trim() === "") return "http/protobuf";
-
-  const normalized = value.trim();
-
-  if ((SUPPORTED_PROTOCOLS as readonly string[]).includes(normalized)) {
-    return normalized as SupportedProtocol;
-  }
-
-  throw new Error(
-    `OTEL_EXPORTER_OTLP_PROTOCOL "${normalized}" is not supported. PayLens supports: ${SUPPORTED_PROTOCOLS.join(", ")}`,
-  );
-}

@@ -22,11 +22,6 @@ function buildConfig(environment: string, logLevel = "info") {
         return logLevel;
       }
 
-      if (key === "app.logFormat") return "json";
-
-      if (key === "app.pinoConsoleEnabled") return true;
-      if (key === "app.otelEnabled") return true;
-      if (key === "app.otelLogsEnabled") return true;
       if (key === "app.otelExporterOtlpEndpoint") return "";
 
       throw new Error(`Unexpected config key: ${key}`);
@@ -90,7 +85,7 @@ describe("logger module options", () => {
     expect(httpOptions("production", "debug").level).toBe("debug");
   });
 
-  it("uses JSON-lines by default and reserves pretty output for explicit opt-in", () => {
+  it("uses JSON in production and pretty console output in development", () => {
     expect(httpOptions("development")).not.toHaveProperty("transport");
   });
 });

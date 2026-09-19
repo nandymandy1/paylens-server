@@ -6,11 +6,7 @@ const baseConfig = (overrides: Record<string, unknown> = {}) =>
   ({
     getOrThrow: (key: string) => {
       const values: Record<string, unknown> = {
-        "app.smtpHost": "",
-        "app.smtpPort": 587,
-        "app.smtpSecure": false,
-        "app.smtpUser": "",
-        "app.smtpPassword": "",
+        "app.smtpUrl": "",
         "app.emailFrom": "PayLens <noreply@paylens.local>",
         "app.environment": "development",
         ...overrides,
@@ -81,9 +77,7 @@ describe("EmailProcessor", () => {
     const sendMail = vi.fn(async () => ({}));
     const { processor } = createProcessor(
       baseConfig({
-        "app.smtpHost": "smtp.example",
-        "app.smtpUser": "user",
-        "app.smtpPassword": "secret",
+        "app.smtpUrl": "smtp://user:secret@smtp.example:587",
       }),
     );
 
@@ -219,9 +213,7 @@ describe("EmailProcessor", () => {
     const sendMail = vi.fn(async () => ({}));
     const { processor } = createProcessor(
       baseConfig({
-        "app.smtpHost": "smtp.example",
-        "app.smtpUser": "user",
-        "app.smtpPassword": "secret",
+        "app.smtpUrl": "smtp://user:secret@smtp.example:587",
       }),
     );
 

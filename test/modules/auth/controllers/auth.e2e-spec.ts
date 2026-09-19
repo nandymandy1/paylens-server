@@ -70,9 +70,7 @@ describe.runIf(process.env.AUTH_E2E_REDIS_URL)("Authentication flows (e2e)", () 
     process.env.NODE_ENV = "test";
     process.env.DATABASE_URL = `postgresql://paylens:paylens@${postgres.getHost()}:${postgres.getMappedPort(5432)}/paylens`;
     process.env.REDIS_URL = process.env.AUTH_E2E_REDIS_URL as string;
-    process.env.CORS_ORIGINS = "http://localhost:3000";
     process.env.FRONTEND_URL = "http://localhost:3000";
-    process.env.EXECUTION_TRACE_ENABLED = "true";
     // Deterministic provider posture: Google disabled here (enabled-path redirect
     // is covered by the controller spec + live smoke).
     process.env.GOOGLE_CLIENT_ID = "";

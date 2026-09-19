@@ -22,8 +22,7 @@ describe("Health endpoints (e2e)", () => {
     process.env.DATABASE_URL = `postgresql://paylens:paylens@${postgres.getHost()}:${postgres.getMappedPort(5432)}/paylens`;
     // No Redis container: Redis is an optional capability and /ready must stay green without it.
     process.env.REDIS_URL = "redis://127.0.0.1:6390";
-    process.env.CORS_ORIGINS = "http://localhost:3000";
-    process.env.EXECUTION_TRACE_ENABLED = "true";
+    process.env.FRONTEND_URL = "http://localhost:3000";
 
     const { createApplication } = await import("@/application.js");
 
