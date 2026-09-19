@@ -1,4 +1,10 @@
 import { randomUUID } from "node:crypto";
+import {
+  parseBooleanEnvStrict,
+  parseIntegerInRange,
+  parseOptionalStringEnv,
+} from "@/common/utils/env.js";
+import { parseTelemetryConfig } from "@/common/tracing/telemetry.config.js";
 
 export type Environment = "development" | "test" | "production";
 
@@ -14,6 +20,7 @@ export type ValidatedEnvironment = {
   EXECUTION_TRACE_ENABLED: boolean;
   OTEL_ENABLED: boolean;
   OTEL_LOGS_ENABLED: boolean;
+  OTEL_METRICS_ENABLED: boolean;
   OTEL_SERVICE_NAME: string;
   OTEL_EXPORTER_OTLP_ENDPOINT: string;
   OTEL_TRACE_SAMPLE_RATIO: number;
@@ -53,24 +60,8 @@ const validateNodeEnvironment = (value: unknown): Environment => {
   return environment as Environment;
 };
 
-const validateInteger = (
-  value: unknown,
-  defaultValue: number,
-  name: string,
-  minimum: number,
-  maximum: number,
-): number => {
-  const numberValue = Number(value ?? defaultValue);
-
-  if (!Number.isInteger(numberValue) || numberValue < minimum || numberValue > maximum) {
-    throw new Error(`${name} must be an integer between ${minimum} and ${maximum}`);
-  }
-
-  return numberValue;
-};
-
 const validatePort = (value: unknown): number => {
-  return validateInteger(value, 4000, "PORT", 1, 65_535);
+  return parseIntegerInRange(value, 4000, "PORT", 1, 65_535);
 };
 
 const validateLogLevel = (value: unknown): ValidatedEnvironment["LOG_LEVEL"] => {
@@ -91,22 +82,6 @@ const validateLogFormat = (value: unknown): ValidatedEnvironment["LOG_FORMAT"] =
   }
 
   return format;
-};
-
-const validateBoolean = (value: unknown, defaultValue: boolean, name: string): boolean => {
-  if (value === undefined || value === "") {
-    return defaultValue;
-  }
-
-  if (value === "true" || value === true) {
-    return true;
-  }
-
-  if (value === "false" || value === false) {
-    return false;
-  }
-
-  throw new Error(`${name} must be true or false`);
 };
 
 const requireUrl = (value: unknown, name: string, allowedProtocols: readonly string[]): string => {
@@ -172,7 +147,6 @@ const validateOptionalUrl = (
 const validateAuthSecret = (value: unknown, nodeEnv: Environment): string => {
   if (value === undefined || value === "") {
     if (nodeEnv === "test") {
-      // Ephemeral process-local secret: test sessions never leave the process.
       return `test-only-ephemeral-${randomUUID()}`;
     }
 
@@ -249,43 +223,42 @@ export const validateEnvironment = (raw: Record<string, unknown>): ValidatedEnvi
   const corsOrigins = validateCorsOrigins(raw.CORS_ORIGINS);
   const logLevel = validateLogLevel(raw.LOG_LEVEL);
   const logFormat = validateLogFormat(raw.LOG_FORMAT);
-  const pinoConsoleEnabled = validateBoolean(
+
+  const pinoConsoleEnabled = parseBooleanEnvStrict(
     raw.PINO_CONSOLE_ENABLED,
     true,
     "PINO_CONSOLE_ENABLED",
   );
-  const executionTraceEnabled = validateBoolean(
+  const executionTraceEnabled = parseBooleanEnvStrict(
     raw.EXECUTION_TRACE_ENABLED,
     true,
     "EXECUTION_TRACE_ENABLED",
   );
-  const otelEnabled = validateBoolean(raw.OTEL_ENABLED, true, "OTEL_ENABLED");
-  const otelLogsEnabled = validateBoolean(raw.OTEL_LOGS_ENABLED, true, "OTEL_LOGS_ENABLED");
-  const otelServiceName =
-    raw.OTEL_SERVICE_NAME === undefined || raw.OTEL_SERVICE_NAME === ""
-      ? "paylens-server"
-      : String(raw.OTEL_SERVICE_NAME);
-  const otelEndpoint =
-    raw.OTEL_EXPORTER_OTLP_ENDPOINT === undefined || raw.OTEL_EXPORTER_OTLP_ENDPOINT === ""
-      ? ""
-      : requireUrl(raw.OTEL_EXPORTER_OTLP_ENDPOINT, "OTEL_EXPORTER_OTLP_ENDPOINT", [
-          "http:",
-          "https:",
-        ]);
+
+  // Telemetry config from canonical single source — must match parseTelemetryConfig() exactly.
+  const telemetry = parseTelemetryConfig(raw as Record<string, string | undefined>);
+
+  // Strict validation: reject invalid sample ratio at validation time.
   const otelSampleRatio = Number(raw.OTEL_TRACE_SAMPLE_RATIO ?? 1);
 
   if (!Number.isFinite(otelSampleRatio) || otelSampleRatio < 0 || otelSampleRatio > 1) {
     throw new Error("OTEL_TRACE_SAMPLE_RATIO must be a number between 0 and 1");
   }
 
-  const slowQueryMs = validateInteger(raw.SLOW_QUERY_MS, 100, "SLOW_QUERY_MS", 1, 60_000);
-  const dbQueryLogEnabled = validateBoolean(
+  const slowQueryMs = parseIntegerInRange(raw.SLOW_QUERY_MS, 100, "SLOW_QUERY_MS", 1, 60_000);
+  const dbQueryLogEnabled = parseBooleanEnvStrict(
     raw.DB_QUERY_LOG_ENABLED,
     false,
     "DB_QUERY_LOG_ENABLED",
   );
-  const throttleTtl = validateInteger(raw.THROTTLE_TTL_MS, 60_000, "THROTTLE_TTL_MS", 1, 3_600_000);
-  const throttleLimit = validateInteger(raw.THROTTLE_LIMIT, 100, "THROTTLE_LIMIT", 1, 10_000);
+  const throttleTtl = parseIntegerInRange(
+    raw.THROTTLE_TTL_MS,
+    60_000,
+    "THROTTLE_TTL_MS",
+    1,
+    3_600_000,
+  );
+  const throttleLimit = parseIntegerInRange(raw.THROTTLE_LIMIT, 100, "THROTTLE_LIMIT", 1, 10_000);
   const frontendUrl = validateOptionalUrl(
     raw.FRONTEND_URL,
     "FRONTEND_URL",
@@ -302,21 +275,21 @@ export const validateEnvironment = (raw: Record<string, unknown>): ValidatedEnvi
   }
 
   const authAccessTokenSecret = validateAuthSecret(raw.AUTH_ACCESS_TOKEN_SECRET, nodeEnv);
-  const authAccessTtl = validateInteger(
+  const authAccessTtl = parseIntegerInRange(
     raw.AUTH_ACCESS_TTL_SECONDS,
     900,
     "AUTH_ACCESS_TTL_SECONDS",
     60,
     3_600,
   );
-  const authRefreshTtl = validateInteger(
+  const authRefreshTtl = parseIntegerInRange(
     raw.AUTH_REFRESH_TTL_SECONDS,
     1_209_600,
     "AUTH_REFRESH_TTL_SECONDS",
     3_600,
     2_592_000,
   );
-  const authCookieSecure = validateBoolean(
+  const authCookieSecure = parseBooleanEnvStrict(
     raw.AUTH_COOKIE_SECURE,
     nodeEnv === "production",
     "AUTH_COOKIE_SECURE",
@@ -331,19 +304,14 @@ export const validateEnvironment = (raw: Record<string, unknown>): ValidatedEnvi
     throw new Error("AUTH_COOKIE_SAME_SITE=none requires AUTH_COOKIE_SECURE=true");
   }
 
-  const authCookieDomain =
-    raw.AUTH_COOKIE_DOMAIN === undefined || raw.AUTH_COOKIE_DOMAIN === ""
-      ? ""
-      : String(raw.AUTH_COOKIE_DOMAIN);
+  const authCookieDomain = parseOptionalStringEnv(raw.AUTH_COOKIE_DOMAIN as string) ?? "";
   const smtpHost = raw.SMTP_HOST === undefined ? "" : String(raw.SMTP_HOST);
-  const smtpPort = validateInteger(raw.SMTP_PORT, 587, "SMTP_PORT", 1, 65_535);
-  const smtpSecure = validateBoolean(raw.SMTP_SECURE, false, "SMTP_SECURE");
+  const smtpPort = parseIntegerInRange(raw.SMTP_PORT, 587, "SMTP_PORT", 1, 65_535);
+  const smtpSecure = parseBooleanEnvStrict(raw.SMTP_SECURE, false, "SMTP_SECURE");
   const smtpUser = raw.SMTP_USER === undefined ? "" : String(raw.SMTP_USER);
   const smtpPassword = raw.SMTP_PASSWORD === undefined ? "" : String(raw.SMTP_PASSWORD);
   const emailFrom =
-    raw.EMAIL_FROM === undefined || raw.EMAIL_FROM === ""
-      ? "PayLens <noreply@paylens.local>"
-      : String(raw.EMAIL_FROM);
+    parseOptionalStringEnv(raw.EMAIL_FROM as string) ?? "PayLens <noreply@paylens.local>";
   const google = validateGoogleGroup(raw, nodeEnv);
 
   validateSmtpGroup({ smtpHost, smtpUser, smtpPassword });
@@ -360,11 +328,12 @@ export const validateEnvironment = (raw: Record<string, unknown>): ValidatedEnvi
     THROTTLE_TTL_MS: throttleTtl,
     THROTTLE_LIMIT: throttleLimit,
     EXECUTION_TRACE_ENABLED: executionTraceEnabled,
-    OTEL_ENABLED: otelEnabled,
-    OTEL_LOGS_ENABLED: otelLogsEnabled,
-    OTEL_SERVICE_NAME: otelServiceName,
-    OTEL_EXPORTER_OTLP_ENDPOINT: otelEndpoint,
-    OTEL_TRACE_SAMPLE_RATIO: otelSampleRatio,
+    OTEL_ENABLED: telemetry.enabled,
+    OTEL_LOGS_ENABLED: telemetry.logsEnabled,
+    OTEL_METRICS_ENABLED: telemetry.metricsEnabled,
+    OTEL_SERVICE_NAME: telemetry.serviceName,
+    OTEL_EXPORTER_OTLP_ENDPOINT: telemetry.endpoint ?? "",
+    OTEL_TRACE_SAMPLE_RATIO: telemetry.traceSampleRatio,
     SLOW_QUERY_MS: slowQueryMs,
     DB_QUERY_LOG_ENABLED: dbQueryLogEnabled,
     FRONTEND_URL: frontendUrl,

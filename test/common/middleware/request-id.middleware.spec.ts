@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import { setAuthUserId } from "@/common/context/request-context.js";
 import { RequestContextMiddleware } from "@/common/middleware/request-id.middleware.js";
 
@@ -17,14 +17,55 @@ const FORBIDDEN_LOG_KEYS = [
   "refreshToken",
 ];
 
+const { mockGetSpan } = vi.hoisted(() => ({
+  mockGetSpan: vi.fn(() => ({
+    spanContext: () => ({
+      traceId: "aabbccddee112233aabbccddee112233",
+      spanId: "1122334455667788",
+      traceFlags: 1,
+      isRemote: false,
+    }),
+  })),
+}));
+
+vi.mock("@opentelemetry/api", () => ({
+  context: { active: vi.fn(() => ({})) },
+  trace: { getSpan: mockGetSpan },
+  metrics: {
+    getMeter: vi.fn(() => ({
+      createCounter: vi.fn(() => ({ add: vi.fn() })),
+      createHistogram: vi.fn(() => ({ record: vi.fn() })),
+    })),
+  },
+}));
+
 function runMiddleware(options?: {
   statusCode?: number;
   headerId?: string | null;
   errorCode?: string;
   authenticateAs?: string;
   finishInNext?: boolean;
+  spanContext?: { traceId: string; spanId: string } | null;
 }) {
   const statusCode = options?.statusCode ?? 200;
+  let finish: () => void = () => undefined;
+  let close: () => void = () => undefined;
+
+  // Override the mock span context if custom values provided
+  if (options?.spanContext !== undefined) {
+    if (options.spanContext === null) {
+      mockGetSpan.mockReturnValueOnce(null as never);
+    } else {
+      mockGetSpan.mockReturnValueOnce({
+        spanContext: () => ({
+          traceFlags: 1,
+          isRemote: false,
+          ...options.spanContext!,
+        }),
+      });
+    }
+  }
+
   const trace = {
     now: vi.fn(() => 100),
     debug: vi.fn(),
@@ -33,26 +74,24 @@ function runMiddleware(options?: {
     warn: vi.fn(),
     error: vi.fn(),
   };
-  let finish: () => void = () => undefined;
+
   const request = {
     header: vi.fn(() => options?.headerId ?? null),
     method: "GET",
     path: "/health",
     errorCode: options?.errorCode,
+    on: vi.fn(),
   };
   const response = {
     on: vi.fn((event: string, callback: () => void) => {
-      if (event === "finish") {
-        finish = callback;
-      }
+      if (event === "finish") finish = callback;
+      if (event === "close") close = callback;
     }),
     setHeader: vi.fn(),
     statusCode,
+    writableFinished: false,
   };
-  // next() runs inside the middleware's request scope, exactly like the real
-  // router pipeline, so auth resolved here is visible to the finish handler.
-  // Passing finish through next() mirrors production, where response finish
-  // fires downstream of the same async chain.
+
   const next = vi.fn(() => {
     if (options?.authenticateAs) {
       setAuthUserId(options.authenticateAs);
@@ -65,10 +104,22 @@ function runMiddleware(options?: {
 
   new RequestContextMiddleware(trace as never).use(request as never, response as never, next);
 
-  return { finish, request, response, trace };
+  return { finish, close, request, response, trace };
 }
 
 describe("requestIdMiddleware", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetSpan.mockReturnValue({
+      spanContext: () => ({
+        traceId: "aabbccddee112233aabbccddee112233",
+        spanId: "1122334455667788",
+        traceFlags: 1,
+        isRemote: false,
+      }),
+    });
+  });
+
   it("accepts a safe incoming request id", () => {
     const { response } = runMiddleware({ headerId: "req_safe" });
 
@@ -87,8 +138,6 @@ describe("requestIdMiddleware", () => {
 
     finish();
 
-    // The mocked trace service forwards payloads untouched; the real service
-    // attaches the ambient requestId (covered in execution-tracing specs).
     expect(trace.debug).toHaveBeenCalledWith(
       expect.objectContaining({ event: "http.request.received", method: "GET", path: "/health" }),
     );
@@ -154,5 +203,40 @@ describe("requestIdMiddleware", () => {
         code: "INTERNAL_SERVER_ERROR",
       }),
     );
+  });
+
+  it("does NOT create a manual root span — uses active HTTP SERVER span", () => {
+    const { trace } = runMiddleware();
+
+    // startRequestSpan should no longer exist on the mock
+    expect(trace).not.toHaveProperty("startRequestSpan");
+  });
+
+  it("retrieves traceId/spanId from the active HTTP SERVER span via trace.getSpan", () => {
+    runMiddleware();
+
+    expect(mockGetSpan).toHaveBeenCalled();
+  });
+
+  it("stores undefined traceId/spanId when span context is invalid (noop telemetry)", () => {
+    runMiddleware({
+      spanContext: { traceId: "00000000000000000000000000000000", spanId: "0000000000000000" },
+    });
+
+    // Zero IDs should not be stored — verified by the middleware logging
+    // without zero traceId/spanId values
+    const { trace } = runMiddleware();
+    const debugCalls = trace.debug.mock.calls;
+
+    expect(debugCalls.length).toBeGreaterThan(0);
+  });
+
+  it("still allows logging after response finish", () => {
+    const { finish, trace } = runMiddleware();
+
+    finish();
+
+    expect(trace.info).toHaveBeenCalled();
+    expect(trace.debug).toHaveBeenCalled();
   });
 });

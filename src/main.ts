@@ -4,12 +4,13 @@ import "./telemetry-bootstrap.js";
 import { Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 
-import { createApplication } from "./application.js";
-
-async function bootstrap(): Promise<void> {
+const bootstrap = async (): Promise<void> => {
   const logger = new Logger("Bootstrap");
 
   try {
+    // Dynamic import ensures telemetry-bootstrap has executed before
+    // application.ts statically imports AppModule (which imports Prisma, etc.).
+    const { createApplication } = await import("./application.js");
     const app = await createApplication();
     const config = app.get(ConfigService);
 
@@ -23,11 +24,9 @@ async function bootstrap(): Promise<void> {
     const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
 
     logger.error("PayLens bootstrap failed", message);
-    // Synchronous fallback: Pino writes asynchronously and process.exit below
-    // could otherwise truncate the structured log above. No secrets logged.
     process.stderr.write(`PayLens bootstrap failed: ${message}\n`);
     process.exit(1);
   }
-}
+};
 
 void bootstrap();

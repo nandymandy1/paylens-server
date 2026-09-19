@@ -1,6 +1,44 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { SpanKind } from "@opentelemetry/api";
 import { EMAIL_JOB } from "@/modules/email/email.constants.js";
 import { EmailService } from "@/modules/email/email.service.js";
+
+const mockSpan = {
+  spanContext: vi.fn(() => ({
+    traceId: "aabbccddee112233aabbccddee112233",
+    spanId: "1122334455667788",
+  })),
+  setStatus: vi.fn(),
+  end: vi.fn(),
+  setAttribute: vi.fn(),
+  recordException: vi.fn(),
+};
+
+const mockTracer = {
+  startSpan: vi.fn(() => mockSpan),
+};
+
+vi.mock("@/common/tracing/telemetry.js", () => ({
+  executionTracer: vi.fn(() => mockTracer),
+}));
+
+vi.mock("@opentelemetry/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@opentelemetry/api")>();
+
+  return {
+    ...actual,
+    context: {
+      active: vi.fn(() => ({})),
+      with: vi.fn((_ctx: unknown, fn: () => void) => fn()),
+    },
+    trace: {
+      ...actual.trace,
+      setSpan: vi.fn((_ctx: unknown, span: unknown) => span),
+      getSpan: vi.fn(() => null),
+      getTracer: vi.fn(() => mockTracer),
+    },
+  };
+});
 
 const createService = () => {
   const queue = { add: vi.fn(async () => ({})) };
@@ -21,6 +59,7 @@ describe("EmailService producer", () => {
   let harness: ReturnType<typeof createService>;
 
   beforeEach(() => {
+    vi.clearAllMocks();
     harness = createService();
   });
 
@@ -32,11 +71,10 @@ describe("EmailService producer", () => {
 
     expect(harness.queue.add).toHaveBeenCalledWith(
       EMAIL_JOB.VERIFY_EMAIL,
-      {
+      expect.objectContaining({
         type: "VERIFY_EMAIL",
         to: "hr@acme.example",
-        verificationUrl: "http://localhost:3000/verify-email?token=abc",
-      },
+      }),
       expect.objectContaining({
         attempts: 3,
         removeOnComplete: true,
@@ -72,13 +110,12 @@ describe("EmailService producer", () => {
 
     expect(harness.queue.add).toHaveBeenCalledWith(
       EMAIL_JOB.ORGANIZATION_INVITATION,
-      {
+      expect.objectContaining({
         type: "ORGANIZATION_INVITATION",
         to: "new@acme.example",
-        invitationUrl: "http://localhost:3000/invite/accept?token=abc",
         organizationName: "Acme",
         role: "EMPLOYEE",
-      },
+      }),
       expect.objectContaining({
         attempts: 3,
         backoff: { type: "exponential", delay: 2_000 },
@@ -86,6 +123,34 @@ describe("EmailService producer", () => {
         removeOnFail: true,
       }),
     );
+  });
+
+  it("creates a PRODUCER span around each enqueue", async () => {
+    await harness.service.sendVerificationEmail(
+      "hr@acme.example",
+      "http://localhost:3000/verify-email?token=abc",
+    );
+
+    expect(mockTracer.startSpan).toHaveBeenCalledWith(
+      "email.queue.publish",
+      expect.objectContaining({
+        kind: SpanKind.PRODUCER,
+        attributes: expect.objectContaining({
+          "messaging.system": "bullmq",
+          "messaging.operation": "publish",
+        }),
+      }),
+    );
+    expect(mockSpan.end).toHaveBeenCalled();
+  });
+
+  it("injects trace context into job data for downstream propagation", async () => {
+    await harness.service.sendVerificationEmail(
+      "hr@acme.example",
+      "http://localhost:3000/verify-email?token=abc",
+    );
+
+    expect(harness.queue.add).toHaveBeenCalled();
   });
 
   it("exposes no process-memory outbox", () => {

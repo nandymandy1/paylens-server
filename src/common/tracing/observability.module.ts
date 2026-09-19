@@ -4,12 +4,13 @@ import { ControllerTraceInterceptor } from "./controller-trace.interceptor.js";
 import { ExecutionTraceService } from "./execution-trace.service.js";
 
 /**
- * Consolidates Nest-visible observability infrastructure:
- * - ExecutionTraceService (global via @Global)
- * - ControllerTraceInterceptor (global APP_INTERCEPTOR)
+ * Global observability infrastructure for NestJS.
  *
- * Business modules import TracingModule (which re-exports ExecutionTraceService)
- * or rely on @Global(). This module focuses on Nest wiring.
+ * - ExecutionTraceService: request-scoped trace/log context, span creation, DB query diagnostics.
+ * - ControllerTraceInterceptor: automatic controller span + started/completed/failed logging.
+ *
+ * This module is @Global — business modules inject ExecutionTraceService directly
+ * without importing this module. AppModule imports it once for Nest wiring.
  */
 @Global()
 @Module({

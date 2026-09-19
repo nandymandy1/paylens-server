@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
+import { SpanKind } from "@opentelemetry/api";
 import { buildEmail, EmailProcessor } from "@/modules/email/email.processor.js";
 
 const baseConfig = (overrides: Record<string, unknown> = {}) =>
@@ -19,6 +20,42 @@ const baseConfig = (overrides: Record<string, unknown> = {}) =>
     },
   }) as never;
 
+const mockSpan = {
+  spanContext: vi.fn(() => ({
+    traceId: "aabbccddee112233aabbccddee112233",
+    spanId: "1122334455667788",
+  })),
+  setStatus: vi.fn(),
+  end: vi.fn(),
+  setAttribute: vi.fn(),
+  recordException: vi.fn(),
+};
+
+const mockTracer = {
+  startSpan: vi.fn(() => mockSpan),
+};
+
+vi.mock("@/common/tracing/telemetry.js", () => ({
+  executionTracer: vi.fn(() => mockTracer),
+}));
+
+vi.mock("@opentelemetry/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@opentelemetry/api")>();
+
+  return {
+    ...actual,
+    context: {
+      active: vi.fn(() => ({})),
+      with: vi.fn((_ctx: unknown, fn: () => void) => fn()),
+    },
+    trace: {
+      ...actual.trace,
+      setSpan: vi.fn((_ctx: unknown, span: unknown) => span),
+      getSpan: vi.fn(() => null),
+    },
+  };
+});
+
 const createProcessor = (config: never) => {
   const logger = {
     info: vi.fn((...args: unknown[]) => {
@@ -36,6 +73,10 @@ const createProcessor = (config: never) => {
 };
 
 describe("EmailProcessor", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("sends through SMTP when configured", async () => {
     const sendMail = vi.fn(async () => ({}));
     const { processor } = createProcessor(
@@ -146,6 +187,91 @@ describe("EmailProcessor", () => {
     expect(built.html).not.toContain("<script>");
     expect(built.html).toContain(
       "ACME &lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt; &amp; Sons",
+    );
+  });
+
+  it("creates a CONSUMER span for job processing", async () => {
+    const { processor } = createProcessor(baseConfig({}));
+
+    await processor.process({
+      name: "verify-email",
+      data: {
+        type: "VERIFY_EMAIL",
+        to: "hr@acme.example",
+        verificationUrl: "http://x/verify?token=t",
+      },
+    } as never);
+
+    expect(mockTracer.startSpan).toHaveBeenCalledWith(
+      "email.queue.process",
+      expect.objectContaining({
+        kind: SpanKind.CONSUMER,
+        attributes: expect.objectContaining({
+          "messaging.system": "bullmq",
+          "messaging.operation": "process",
+        }),
+      }),
+      expect.anything(),
+    );
+  });
+
+  it("creates a CLIENT span for SMTP send", async () => {
+    const sendMail = vi.fn(async () => ({}));
+    const { processor } = createProcessor(
+      baseConfig({
+        "app.smtpHost": "smtp.example",
+        "app.smtpUser": "user",
+        "app.smtpPassword": "secret",
+      }),
+    );
+
+    (processor as unknown as { transporter: unknown }).transporter = { sendMail };
+
+    mockTracer.startSpan.mockClear();
+
+    await processor.process({
+      name: "verify-email",
+      data: {
+        type: "VERIFY_EMAIL",
+        to: "hr@acme.example",
+        verificationUrl: "http://x/verify?token=t",
+      },
+    } as never);
+
+    // First call is CONSUMER, second is CLIENT (SMTP)
+    expect(mockTracer.startSpan).toHaveBeenCalledWith(
+      "email.smtp.send",
+      expect.objectContaining({
+        kind: SpanKind.CLIENT,
+        attributes: expect.objectContaining({
+          "messaging.system": "smtp",
+        }),
+      }),
+      expect.anything(),
+    );
+  });
+
+  it("propagates traceId from producer to consumer", async () => {
+    const { processor } = createProcessor(baseConfig({}));
+
+    // Pass trace context in job data
+    await processor.process({
+      name: "verify-email",
+      data: {
+        type: "VERIFY_EMAIL",
+        to: "hr@acme.example",
+        verificationUrl: "http://x/verify?token=t",
+        __traceContext: {
+          traceparent: "00-aabbccddee112233aabbccddee112233-1122334455667788-01",
+        },
+      },
+    } as never);
+
+    // The CONSUMER span should be created with the extracted context
+    expect(mockTracer.startSpan).toHaveBeenCalledWith(
+      "email.queue.process",
+      expect.anything(),
+      expect.anything(),
     );
   });
 });

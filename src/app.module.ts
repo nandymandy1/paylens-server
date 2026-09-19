@@ -8,7 +8,7 @@ import { ResponseEnvelopeInterceptor } from "@/common/interceptors/response-enve
 import { CsrfOriginMiddleware } from "@/common/middleware/csrf-origin.middleware.js";
 import { RequestContextMiddleware } from "@/common/middleware/request-id.middleware.js";
 import { createGlobalValidationPipe } from "@/common/pipes/global-validation.pipe.js";
-import { TracingModule } from "@/common/tracing/tracing.module.js";
+import { ObservabilityModule } from "@/common/tracing/observability.module.js";
 import appConfig from "@/config/app.config.js";
 import { validateEnvironment } from "@/config/env.validation.js";
 import { buildLoggerModuleOptions } from "@/config/logger.config.js";
@@ -45,7 +45,7 @@ import { RedisModule } from "@/redis/redis.module.js";
         },
       ],
     }),
-    TracingModule,
+    ObservabilityModule,
     DatabaseModule,
     RedisModule,
     QueueModule,
@@ -61,15 +61,15 @@ import { RedisModule } from "@/redis/redis.module.js";
     CsrfOriginMiddleware,
     { provide: APP_PIPE, useFactory: createGlobalValidationPipe },
     { provide: APP_FILTER, useClass: HttpExceptionFilter },
-    // ControllerTraceInterceptor is registered via ObservabilityModule (APP_INTERCEPTOR).
     { provide: APP_INTERCEPTOR, useClass: ResponseEnvelopeInterceptor },
     { provide: APP_GUARD, useClass: ThrottlerGuard },
   ],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
-    consumer
-      .apply(RequestContextMiddleware, CsrfOriginMiddleware)
-      .forRoutes({ path: "*", method: RequestMethod.ALL });
+    consumer.apply(RequestContextMiddleware, CsrfOriginMiddleware).forRoutes({
+      path: "*",
+      method: RequestMethod.ALL,
+    });
   }
 }

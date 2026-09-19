@@ -154,10 +154,22 @@ describe("observability configuration", () => {
       expect(parsed.OTEL_LOGS_ENABLED).toBe(true);
     });
 
+    it("defaults OTEL_METRICS_ENABLED to true when unset", () => {
+      const parsed = validateEnvironment(validEnv);
+
+      expect(parsed.OTEL_METRICS_ENABLED).toBe(true);
+    });
+
     it("parses OTEL_ENABLED=false correctly", () => {
       const parsed = validateEnvironment({ ...validEnv, OTEL_ENABLED: "false" });
 
       expect(parsed.OTEL_ENABLED).toBe(false);
+    });
+
+    it("parses OTEL_METRICS_ENABLED=false correctly", () => {
+      const parsed = validateEnvironment({ ...validEnv, OTEL_METRICS_ENABLED: "false" });
+
+      expect(parsed.OTEL_METRICS_ENABLED).toBe(false);
     });
 
     it("defaults OTEL_TRACE_SAMPLE_RATIO to 1", () => {
@@ -172,10 +184,28 @@ describe("observability configuration", () => {
       expect(parsed.OTEL_TRACE_SAMPLE_RATIO).toBe(0.5);
     });
 
+    it("accepts OTEL_TRACE_SAMPLE_RATIO=0", () => {
+      const parsed = validateEnvironment({ ...validEnv, OTEL_TRACE_SAMPLE_RATIO: "0" });
+
+      expect(parsed.OTEL_TRACE_SAMPLE_RATIO).toBe(0);
+    });
+
     it("rejects OTEL_TRACE_SAMPLE_RATIO outside 0..1", () => {
       expect(() => validateEnvironment({ ...validEnv, OTEL_TRACE_SAMPLE_RATIO: "1.5" })).toThrow(
         "OTEL_TRACE_SAMPLE_RATIO",
       );
+    });
+
+    it("rejects negative OTEL_TRACE_SAMPLE_RATIO", () => {
+      expect(() => validateEnvironment({ ...validEnv, OTEL_TRACE_SAMPLE_RATIO: "-0.1" })).toThrow(
+        "OTEL_TRACE_SAMPLE_RATIO",
+      );
+    });
+
+    it("rejects unsupported OTEL_EXPORTER_OTLP_PROTOCOL", () => {
+      expect(() =>
+        validateEnvironment({ ...validEnv, OTEL_EXPORTER_OTLP_PROTOCOL: "grpc" }),
+      ).toThrow("not supported");
     });
   });
 

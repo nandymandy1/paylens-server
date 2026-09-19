@@ -1,9 +1,46 @@
 import { lastValueFrom, of } from "rxjs";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import { requestContext } from "@/common/context/request-context.js";
-import { ControllerTraceInterceptor } from "@/common/tracing/controller-trace.interceptor.js";
-import { ExecutionTraceService } from "@/common/tracing/execution-trace.service.js";
-import { TraceMethod } from "@/common/tracing/trace-method.decorator.js";
+
+vi.mock("@/common/tracing/telemetry.js", () => {
+  const mockSpan = {
+    spanContext: () => ({ traceId: "0".repeat(32), spanId: "0".repeat(16), traceFlags: 0 }),
+    setAttribute: vi.fn(),
+    setStatus: vi.fn(),
+    end: vi.fn(),
+    recordException: vi.fn(),
+  };
+
+  return {
+    initializeTelemetry: vi.fn(),
+    shutdownTelemetry: vi.fn().mockResolvedValue(undefined),
+    getTelemetryRuntimeInfo: vi.fn().mockReturnValue({
+      initialized: true,
+      serviceName: "test",
+      protocol: "http/protobuf",
+      traceSampleRatio: 1,
+      logsEnabled: true,
+      metricsEnabled: true,
+    }),
+    executionTracer: vi.fn().mockReturnValue({ startSpan: vi.fn().mockReturnValue(mockSpan) }),
+    executionMeter: vi.fn().mockReturnValue({
+      createCounter: vi.fn().mockReturnValue({ add: vi.fn() }),
+      createHistogram: vi.fn().mockReturnValue({ record: vi.fn() }),
+    }),
+    context: {
+      active: vi.fn().mockReturnValue({}),
+      with: vi.fn((_c: unknown, fn: () => unknown) => fn()),
+    },
+    trace: { setSpan: vi.fn().mockReturnValue({}) },
+    SeverityNumber: { TRACE: 1, DEBUG: 5, INFO: 9, WARN: 13, ERROR: 17, FATAL: 21 },
+  };
+});
+
+// Must import after mock setup
+const { ControllerTraceInterceptor } =
+  await import("@/common/tracing/controller-trace.interceptor.js");
+const { ExecutionTraceService } = await import("@/common/tracing/execution-trace.service.js");
+const { TraceMethod } = await import("@/common/tracing/trace-method.decorator.js");
 
 function createTraceService() {
   const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
@@ -14,6 +51,10 @@ function createTraceService() {
 }
 
 describe("execution tracing", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("correlates controller start and completion events with a request ID", async () => {
     const { logger, trace } = createTraceService();
     const interceptor = new ControllerTraceInterceptor(trace);
@@ -57,7 +98,8 @@ describe("execution tracing", () => {
     const { logger, trace } = createTraceService();
 
     class ExampleService {
-      constructor(readonly executionTrace: ExecutionTraceService) {}
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test mock
+      constructor(readonly executionTrace: any) {}
 
       @TraceMethod()
       async execute(secret: string) {
@@ -91,7 +133,8 @@ describe("execution tracing", () => {
     const { logger, trace } = createTraceService();
 
     class FailingService {
-      constructor(readonly executionTrace: ExecutionTraceService) {}
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test mock
+      constructor(readonly executionTrace: any) {}
 
       @TraceMethod()
       async execute() {
@@ -216,8 +259,8 @@ describe("database execution events", () => {
     };
     const trace = new ExecutionTraceService(config as never, logger as never);
 
-    trace.recordDatabaseQuery({ model: "Employee", action: "findMany", durationMs: 99 });
-    trace.recordDatabaseQuery({ model: "Employee", action: "findMany", durationMs: 101 });
+    trace.recordDatabaseQuery({ statementType: "SELECT", durationMs: 99 });
+    trace.recordDatabaseQuery({ statementType: "INSERT", durationMs: 101 });
 
     expect(logger.debug).toHaveBeenCalledWith(
       expect.objectContaining({ event: "db.query.completed", durationMs: 99 }),

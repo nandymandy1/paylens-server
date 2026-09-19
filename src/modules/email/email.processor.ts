@@ -1,10 +1,12 @@
+import { context as otelContext, SpanKind, trace } from "@opentelemetry/api";
 import { Processor, WorkerHost } from "@nestjs/bullmq";
 import { ConfigService } from "@nestjs/config";
 import type { Job } from "bullmq";
 import { createTransport, type Transporter } from "nodemailer";
 import { PinoLogger } from "nestjs-pino";
 import { ExecutionTraceService } from "@/common/tracing/execution-trace.service.js";
-import { TraceBusinessService } from "@/common/tracing/trace-method.decorator.js";
+import { extractTraceContext, getTraceIdFromCarrier } from "@/common/tracing/bullmq-propagation.js";
+import { executionTracer } from "@/common/tracing/telemetry.js";
 import { EMAIL_QUEUE } from "@/modules/email/email.constants.js";
 import type { EmailJob } from "@/modules/email/email.type.js";
 
@@ -43,8 +45,6 @@ export const buildEmail = (job: EmailJob): BuiltEmail => {
         url: job.invitationUrl,
       };
     default: {
-      // Malformed payloads fail explicitly (and retry) rather than throwing an
-      // obscure TypeError downstream. Only the job type is logged — never the payload.
       const unexpected = (job as { type?: unknown }).type;
 
       throw new Error(`Unsupported email job type: ${String(unexpected)}`);
@@ -55,9 +55,12 @@ export const buildEmail = (job: EmailJob): BuiltEmail => {
 /**
  * Owns actual email delivery. SMTP network I/O happens here — never inside
  * HTTP handlers or domain/auth services.
+ *
+ * When trace context was injected by the producer (EmailService), the worker
+ * extracts it and wraps the entire job in a CONSUMER span, with SMTP delivery
+ * as a nested CLIENT span.
  */
 @Processor(EMAIL_QUEUE)
-@TraceBusinessService(["process"])
 export class EmailProcessor extends WorkerHost {
   private readonly transporter: Transporter | null;
   private readonly from: string;
@@ -66,7 +69,7 @@ export class EmailProcessor extends WorkerHost {
   constructor(
     private readonly config: ConfigService,
     private readonly logger: PinoLogger,
-    readonly executionTrace?: ExecutionTraceService,
+    private readonly executionTrace?: ExecutionTraceService,
   ) {
     super();
 
@@ -88,47 +91,105 @@ export class EmailProcessor extends WorkerHost {
   }
 
   async onModuleDestroy(): Promise<void> {
-    // Force-close: a graceful close hangs when Redis is unreachable, which
-    // would block process shutdown while /ready already reports Redis down.
-    // Aborting in-flight jobs at teardown is correct — Nest is terminating.
     await this.worker.close(true);
   }
 
   async process(job: Job<EmailJob>): Promise<void> {
     const built = buildEmail(job.data);
 
-    if (this.transporter) {
-      await this.transporter.sendMail({
-        from: this.from,
-        to: job.data.to,
-        subject: built.subject,
-        html: built.html,
+    const jobData = job.data as Record<string, unknown>;
+    const extractedContext = extractTraceContext(jobData);
+    const producerTraceId = getTraceIdFromCarrier(jobData);
+
+    const tracer = executionTracer();
+
+    // CONSUMER span: represents the worker receiving and processing the job.
+    const consumerSpan = tracer.startSpan(
+      "email.queue.process",
+      {
+        kind: SpanKind.CONSUMER,
+        attributes: {
+          "messaging.system": "bullmq",
+          "messaging.operation": "process",
+          "messaging.destination.name": EMAIL_QUEUE,
+          "messaging.bullmq.job.name": job.name ?? "unknown",
+        },
+      },
+      extractedContext,
+    );
+
+    const consumerCtx = trace.setSpan(extractedContext, consumerSpan);
+
+    try {
+      await otelContext.with(consumerCtx, async () => {
+        if (this.transporter) {
+          // CLIENT span: actual external SMTP operation.
+          const smtpSpan = tracer.startSpan(
+            "email.smtp.send",
+            {
+              kind: SpanKind.CLIENT,
+              attributes: {
+                "messaging.system": "smtp",
+                "messaging.operation": "send",
+                "messaging.destination.name": job.data.type,
+                "email.provider": this.config.getOrThrow<string>("app.smtpHost"),
+              },
+            },
+            consumerCtx,
+          );
+
+          const smtpCtx = trace.setSpan(consumerCtx, smtpSpan);
+
+          try {
+            await otelContext.with(smtpCtx, () =>
+              this.transporter!.sendMail({
+                from: this.from,
+                to: job.data.to,
+                subject: built.subject,
+                html: built.html,
+              }),
+            );
+            smtpSpan.setStatus({ code: 1 });
+          } catch (error) {
+            smtpSpan.setStatus({ code: 2 });
+            if (error instanceof Error) smtpSpan.recordException(error);
+            throw error;
+          } finally {
+            smtpSpan.end();
+          }
+
+          return;
+        }
+
+        if (this.environment === "production") {
+          throw new Error(`Email delivery unavailable: SMTP is not configured (job ${job.name})`);
+        }
+
+        this.logger.info(
+          {
+            event: "dev.email",
+            type: job.data.type,
+            subject: built.subject,
+            recipientPresent: true,
+            ...(producerTraceId !== undefined ? { producerTraceId } : {}),
+            ...(job.data.type === "ORGANIZATION_INVITATION"
+              ? {
+                  organization: job.data.organizationName,
+                  role: job.data.role,
+                }
+              : {}),
+          },
+          `[DEV EMAIL] type=${job.data.type}`,
+        );
       });
 
-      return;
+      consumerSpan.setStatus({ code: 1 });
+    } catch (error) {
+      consumerSpan.setStatus({ code: 2 });
+      if (error instanceof Error) consumerSpan.recordException(error);
+      throw error;
+    } finally {
+      consumerSpan.end();
     }
-
-    if (this.environment === "production") {
-      // Never print action tokens/URLs in production; fail explicitly instead.
-      throw new Error(`Email delivery unavailable: SMTP is not configured (job ${job.name})`);
-    }
-
-    // Action URLs contain credentials. Development delivery remains observable
-    // without ever writing a reusable link or recipient address to logs.
-    this.logger.info(
-      {
-        event: "dev.email",
-        type: job.data.type,
-        subject: built.subject,
-        recipientPresent: true,
-        ...(job.data.type === "ORGANIZATION_INVITATION"
-          ? {
-              organization: job.data.organizationName,
-              role: job.data.role,
-            }
-          : {}),
-      },
-      `[DEV EMAIL] type=${job.data.type}`,
-    );
   }
 }

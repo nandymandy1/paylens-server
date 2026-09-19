@@ -1,7 +1,8 @@
 import { Writable } from "node:stream";
-import { SeverityNumber } from "@opentelemetry/api-logs";
+import type { SeverityNumber } from "@opentelemetry/api-logs";
 import { sanitizeForLog } from "@/common/utils/log-sanitizer.js";
 import { emitOtelLog } from "@/common/tracing/telemetry.js";
+import { PINO_TO_OTEL, DEFAULT_OTEL_SEVERITY } from "@/common/tracing/telemetry.utils.js";
 
 type PinoRecord = Record<string, unknown>;
 
@@ -15,24 +16,6 @@ type OtlpLogDestinationOptions = {
     spanId?: string;
   }) => void;
   reportFailure?: () => void;
-};
-
-const severityByPinoLevel: Record<number, SeverityNumber> = {
-  10: SeverityNumber.TRACE,
-  20: SeverityNumber.DEBUG,
-  30: SeverityNumber.INFO,
-  40: SeverityNumber.WARN,
-  50: SeverityNumber.ERROR,
-  60: SeverityNumber.FATAL,
-};
-
-const levelNameByPinoLevel: Record<number, string> = {
-  10: "TRACE",
-  20: "DEBUG",
-  30: "INFO",
-  40: "WARN",
-  50: "ERROR",
-  60: "FATAL",
 };
 
 function otelAttributes(record: PinoRecord): Record<string, string | number | boolean | string[]> {
@@ -70,10 +53,11 @@ export class OtlpLogDestination extends Writable {
       const level = typeof record.level === "number" ? record.level : 30;
       const traceId = typeof record.traceId === "string" ? record.traceId : undefined;
       const spanId = typeof record.spanId === "string" ? record.spanId : undefined;
+      const severity = PINO_TO_OTEL[level] ?? DEFAULT_OTEL_SEVERITY;
 
       this.emitRecord({
-        severityNumber: severityByPinoLevel[level] ?? SeverityNumber.INFO,
-        severityText: levelNameByPinoLevel[level] ?? "INFO",
+        severityNumber: severity.number,
+        severityText: severity.text,
         body: JSON.stringify(record),
         attributes: otelAttributes(record),
         traceId,

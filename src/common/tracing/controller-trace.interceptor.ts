@@ -1,6 +1,7 @@
 import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from "@nestjs/common";
 import { defer, from, lastValueFrom, type Observable } from "rxjs";
 import { getErrorMetadata as errorMetadata } from "@/common/utils/error.js";
+import { resolveRequestRouteForLog } from "@/common/utils/http.js";
 import { safeRequestMetadata } from "@/common/utils/log-sanitizer.js";
 import { ExecutionTraceService } from "./execution-trace.service.js";
 
@@ -38,7 +39,7 @@ export class ControllerTraceInterceptor implements NestInterceptor {
               event: "controller.started",
               controller,
               method,
-              route: request.route?.path ?? request.path,
+              route: resolveRequestRouteForLog(request as never),
               ...safeRequestMetadata(request),
             });
             try {
@@ -48,7 +49,7 @@ export class ControllerTraceInterceptor implements NestInterceptor {
                 event: "controller.completed",
                 controller,
                 method,
-                route: request.route?.path ?? request.path,
+                route: resolveRequestRouteForLog(request as never),
                 durationMs: this.executionTrace.durationSince(startedAt),
                 ...safeRequestMetadata(request),
               });
@@ -59,7 +60,7 @@ export class ControllerTraceInterceptor implements NestInterceptor {
                 event: "controller.failed",
                 controller,
                 method,
-                route: request.route?.path ?? request.path,
+                route: resolveRequestRouteForLog(request as never),
                 durationMs: this.executionTrace.durationSince(startedAt),
                 error: errorMetadata(error),
                 ...safeRequestMetadata(request),

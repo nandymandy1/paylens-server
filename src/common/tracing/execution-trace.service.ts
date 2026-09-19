@@ -3,48 +3,43 @@ import { ConfigService } from "@nestjs/config";
 import { PinoLogger } from "nestjs-pino";
 import { requestContext } from "@/common/context/request-context.js";
 import { sanitizeForLog } from "@/common/utils/log-sanitizer.js";
-import { context, executionTracer, initializeTelemetry, trace } from "./telemetry.js";
+import { context, executionTracer, getTelemetryRuntimeInfo, trace } from "./telemetry.js";
 import { shutdownTelemetry } from "./telemetry.js";
+import { isValidSpanId, isValidTraceId } from "./telemetry.utils.js";
 
 type TraceEvent = Record<string, unknown> & { event: string };
 
 @Injectable()
 export class ExecutionTraceService {
+  // Immutable config cached once in constructor — never re-read on hot paths.
+  private readonly executionTraceEnabled: boolean;
+  private readonly dbQueryLogEnabled: boolean;
+  private readonly slowQueryMs: number;
+
   constructor(
     private readonly config: ConfigService,
     private readonly logger: PinoLogger,
   ) {
-    const enabled = this.config.getOrThrow<unknown>("app.otelEnabled");
-    const logsEnabled = this.config.getOrThrow<unknown>("app.otelLogsEnabled");
-    const serviceName = this.config.getOrThrow<unknown>("app.otelServiceName");
-    const exporterEndpoint = this.config.getOrThrow<unknown>("app.otelExporterOtlpEndpoint");
-    const sampleRatio = this.config.getOrThrow<unknown>("app.otelTraceSampleRatio");
-    const logLevel = this.config.getOrThrow<string>("app.logLevel");
-    const logFormat = this.config.getOrThrow<string>("app.logFormat");
-    const executionTraceEnabled = this.config.getOrThrow<boolean>("app.executionTraceEnabled");
-    const dbQueryLogEnabled = this.config.getOrThrow<boolean>("app.dbQueryLogEnabled");
-    const slowQueryMs = this.config.getOrThrow<number>("app.slowQueryMs");
+    this.executionTraceEnabled = this.config.getOrThrow<boolean>("app.executionTraceEnabled");
+    this.dbQueryLogEnabled = this.config.getOrThrow<boolean>("app.dbQueryLogEnabled");
+    this.slowQueryMs = this.config.getOrThrow<number>("app.slowQueryMs");
 
-    initializeTelemetry({
-      enabled: enabled !== false,
-      logsEnabled: logsEnabled !== false,
-      serviceName: typeof serviceName === "string" ? serviceName : "paylens-server",
-      exporterEndpoint: typeof exporterEndpoint === "string" ? exporterEndpoint : "",
-      sampleRatio: typeof sampleRatio === "number" ? sampleRatio : 1,
-    });
+    // Log actual telemetry runtime state — no second initialization.
+    const telemetry = getTelemetryRuntimeInfo();
 
     this.logger.info({
       event: "observability.initialized",
-      logLevel,
-      logFormat,
-      executionTraceEnabled,
-      dbQueryLogEnabled,
-      slowQueryMs,
-      otelEnabled: enabled !== false,
-      otelLogsEnabled:
-        logsEnabled !== false && typeof exporterEndpoint === "string" && !!exporterEndpoint,
-      serviceName: typeof serviceName === "string" ? serviceName : "paylens-server",
-      otlpProtocol: "http/protobuf",
+      logLevel: this.config.getOrThrow<string>("app.logLevel"),
+      logFormat: this.config.getOrThrow<string>("app.logFormat"),
+      executionTraceEnabled: this.executionTraceEnabled,
+      dbQueryLogEnabled: this.dbQueryLogEnabled,
+      slowQueryMs: this.slowQueryMs,
+      otelEnabled: telemetry.initialized,
+      otelLogsEnabled: telemetry.logsEnabled,
+      otelMetricsEnabled: telemetry.metricsEnabled,
+      serviceName: telemetry.serviceName,
+      traceSampleRatio: telemetry.traceSampleRatio,
+      protocol: telemetry.protocol,
     });
   }
 
@@ -73,10 +68,7 @@ export class ExecutionTraceService {
   }
 
   debug(event: TraceEvent): void {
-    if (!this.config.getOrThrow<boolean>("app.executionTraceEnabled")) {
-      return;
-    }
-
+    if (!this.executionTraceEnabled) return;
     this.logger.debug(this.withContext(event));
   }
 
@@ -101,6 +93,7 @@ export class ExecutionTraceService {
     const span = executionTracer().startSpan(name);
     const spanContext = span.spanContext();
     const active = trace.setSpan(context.active(), span);
+    const validTrace = isValidTraceId(spanContext.traceId) && isValidSpanId(spanContext.spanId);
 
     for (const [key, value] of Object.entries(attributes)) {
       if (value !== undefined) span.setAttribute(key, value);
@@ -110,8 +103,7 @@ export class ExecutionTraceService {
       requestContext.run(
         {
           ...(parent ?? { requestId: "background" }),
-          traceId: spanContext.traceId,
-          spanId: spanContext.spanId,
+          ...(validTrace ? { traceId: spanContext.traceId, spanId: spanContext.spanId } : {}),
         },
         async () => {
           try {
@@ -132,46 +124,22 @@ export class ExecutionTraceService {
     );
   }
 
-  startRequestSpan(attributes: Record<string, string | number | boolean | undefined>) {
-    const span = executionTracer().startSpan("http.request");
-    const spanContext = span.spanContext();
-    const active = trace.setSpan(context.active(), span);
-
-    for (const [key, value] of Object.entries(attributes)) {
-      if (value !== undefined) span.setAttribute(key, value);
-    }
-
-    return {
-      context: active,
-      run: <T>(callback: () => T): T => context.with(active, callback),
-      traceId: spanContext.traceId,
-      spanId: spanContext.spanId,
-      end: (statusCode: number) => {
-        span.setAttribute("http.response.status_code", statusCode);
-        span.setStatus({ code: statusCode >= 500 ? 2 : 1 });
-        span.end();
-      },
-    };
-  }
-
-  recordDatabaseQuery(event: { model?: string; action?: string; durationMs: number }): void {
+  recordDatabaseQuery(event: { statementType?: string; durationMs: number }): void {
     // Prisma $on("query") fires AFTER the query completes. Creating a span here
     // would produce a fake post-query child span with zero real duration.
     // Real Prisma spans come from @prisma/instrumentation. Query events are used
     // only for terminal diagnostics (slow-query warnings, DEBUG timing logs).
-    if (event.durationMs >= this.config.getOrThrow<number>("app.slowQueryMs")) {
+    if (event.durationMs >= this.slowQueryMs) {
       this.warn({
         event: "db.query.slow",
-        model: event.model ?? "raw",
-        operation: event.action ?? "query",
+        statementType: event.statementType ?? "UNKNOWN",
         durationMs: event.durationMs,
-        thresholdMs: this.config.getOrThrow<number>("app.slowQueryMs"),
+        thresholdMs: this.slowQueryMs,
       });
-    } else if (this.config.getOrThrow<boolean>("app.dbQueryLogEnabled")) {
+    } else if (this.dbQueryLogEnabled) {
       this.debug({
         event: "db.query.completed",
-        model: event.model ?? "raw",
-        operation: event.action ?? "query",
+        statementType: event.statementType ?? "UNKNOWN",
         durationMs: event.durationMs,
       });
     }
