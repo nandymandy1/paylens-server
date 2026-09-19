@@ -1,9 +1,9 @@
 import { HttpStatus, Injectable } from "@nestjs/common";
 import { createHash } from "node:crypto";
-import { EmployeeStatus, EmploymentType, type Prisma } from "@prisma/client";
+import { EmployeeStatus, EmploymentType, Prisma } from "@prisma/client";
 import { dayjs, toDateOnly } from "@/common/utils/date.js";
 import { isRecord } from "@/common/utils/object.js";
-import { isPrismaUniqueViolationOn } from "@/common/utils/prisma.js";
+import { isPrismaRelationViolation, isPrismaUniqueViolationOn } from "@/common/utils/prisma.js";
 import { normalizeEmail } from "@/common/utils/string.js";
 import {
   buildCursorPage,
@@ -14,12 +14,17 @@ import {
 import type { CursorPage } from "@/common/pagination/cursor-pagination.type.js";
 import { ExecutionTraceService } from "@/common/tracing/execution-trace.service.js";
 import { TraceBusinessService } from "@/common/tracing/trace-method.decorator.js";
+import {
+  IdempotencyService,
+  isValidIdempotencyKey,
+} from "@/common/idempotency/idempotency.service.js";
 import { PrismaService } from "@/database/prisma.service.js";
 import { AuthException } from "@/modules/auth/auth.exception.js";
 import { AUTH_ERROR_CODES } from "@/modules/auth/constants/auth.constants.js";
 import type { RequestPrincipal } from "@/modules/auth/types/auth.types.js";
 import { activeTenantMembershipWhere } from "@/modules/auth/utils/tenant-access.utils.js";
 import { DepartmentsService } from "@/modules/departments/departments.service.js";
+import { DEPARTMENT_ERROR_CODES } from "@/modules/departments/constants/departments.constants.js";
 import {
   EMPLOYEE_DIRECTIONS,
   EMPLOYEE_DIRECTORY_ROLES,
@@ -29,7 +34,11 @@ import {
   type EmployeeDirection,
   type EmployeeSort,
 } from "@/modules/employees/constants/employees.constants.js";
-import type { CreateEmployeeDto, ListEmployeesDto } from "@/modules/employees/dto/employees.dto.js";
+import type {
+  CreateEmployeeDto,
+  ListEmployeesDto,
+  UpdateEmployeeDto,
+} from "@/modules/employees/dto/employees.dto.js";
 import type {
   EmployeeCursorPayload,
   EmployeeDetail,
@@ -109,13 +118,20 @@ type EmployeeRow = {
   department: { id: string; code: string; name: string };
 };
 
+type EmployeeSearchRow = Omit<EmployeeRow, "department"> & {
+  departmentId: string;
+  departmentCode: string;
+  departmentName: string;
+};
+
 @Injectable()
-@TraceBusinessService(["list", "detail", "createEmployee"])
+@TraceBusinessService(["list", "detail", "createEmployee", "updateEmployee", "deleteEmployee"])
 export class EmployeesService {
   constructor(
     private readonly prisma: PrismaService,
     readonly executionTrace: ExecutionTraceService,
     private readonly departments: DepartmentsService,
+    private readonly idempotency: IdempotencyService = new IdempotencyService(prisma),
   ) {}
 
   private async requireActiveMembership(principal: RequestPrincipal) {
@@ -183,6 +199,22 @@ export class EmployeesService {
     throw new AuthException(
       EMPLOYEE_ERROR_CODES.EMPLOYEE_EMAIL_ALREADY_EXISTS,
       "An employee with this work email already exists.",
+      HttpStatus.CONFLICT,
+    );
+  }
+
+  private throwIdempotencyKeyRequired(): never {
+    throw new AuthException(
+      EMPLOYEE_ERROR_CODES.IDEMPOTENCY_KEY_REQUIRED,
+      "A valid Idempotency-Key header is required.",
+      HttpStatus.BAD_REQUEST,
+    );
+  }
+
+  private throwIdempotencyConflict(): never {
+    throw new AuthException(
+      EMPLOYEE_ERROR_CODES.IDEMPOTENCY_KEY_CONFLICT,
+      "This idempotency key was already used for a different request.",
       HttpStatus.CONFLICT,
     );
   }
@@ -340,6 +372,77 @@ export class EmployeesService {
     };
   }
 
+  private async searchRows(
+    organizationId: string,
+    dto: ListEmployeesDto,
+    sort: EmployeeSort,
+    direction: EmployeeDirection,
+    payload: EmployeeCursorPayload | null,
+    limit: number,
+    search: string,
+  ): Promise<EmployeeRow[]> {
+    const normalizedSearch = search.toLocaleLowerCase("en-US");
+    const conditions: Prisma.Sql[] = [Prisma.sql`e."organizationId" = ${organizationId}`];
+
+    if (dto.departmentId) conditions.push(Prisma.sql`e."departmentId" = ${dto.departmentId}`);
+    if (dto.countryCode)
+      conditions.push(Prisma.sql`e."countryCode" = ${dto.countryCode.toUpperCase()}`);
+    if (dto.status) conditions.push(Prisma.sql`e.status = ${dto.status}`);
+    if (dto.employmentType) conditions.push(Prisma.sql`e."employmentType" = ${dto.employmentType}`);
+
+    conditions.push(Prisma.sql`(
+      LOWER(e."firstName") LIKE ${`${normalizedSearch}%`}
+      OR LOWER(e."lastName") LIKE ${`${normalizedSearch}%`}
+      OR LOWER(e."workEmail") LIKE ${`${normalizedSearch}%`}
+      OR LOWER(e."employeeNumber") LIKE ${`${normalizedSearch}%`}
+    )`);
+
+    if (payload) {
+      const idOp = direction === "asc" ? Prisma.raw(">") : Prisma.raw("<");
+
+      if (sort === "hireDate" && isHireDateCursor(payload)) {
+        const dateOp = direction === "asc" ? Prisma.raw(">") : Prisma.raw("<");
+
+        conditions.push(
+          Prisma.sql`(e."hireDate" ${dateOp} ${new Date(payload.hireDate)} OR (e."hireDate" = ${new Date(payload.hireDate)} AND e.id ${idOp} ${payload.id}))`,
+        );
+      } else if (sort === "employeeNumber" && isNumberCursor(payload)) {
+        conditions.push(
+          Prisma.sql`(e."employeeNumber" ${idOp} ${payload.employeeNumber} OR (e."employeeNumber" = ${payload.employeeNumber} AND e.id ${idOp} ${payload.id}))`,
+        );
+      } else if (sort === "lastName" && isNameCursor(payload)) {
+        conditions.push(
+          Prisma.sql`(e."lastName" ${idOp} ${payload.lastName} OR (e."lastName" = ${payload.lastName} AND e.id ${idOp} ${payload.id}))`,
+        );
+      }
+    }
+
+    const sortColumn =
+      sort === "hireDate"
+        ? Prisma.raw('e."hireDate"')
+        : sort === "employeeNumber"
+          ? Prisma.raw('e."employeeNumber"')
+          : Prisma.raw('e."lastName"');
+    const sortDirection = Prisma.raw(direction.toUpperCase());
+    const rows = await this.prisma.$queryRaw<EmployeeSearchRow[]>(Prisma.sql`
+      SELECT e.id, e."employeeNumber", e."firstName", e."lastName", e."workEmail", e."jobTitle",
+             e.level, e."countryCode", e."employmentType", e.status, e."hireDate", e."terminationDate",
+             e."createdAt", e."updatedAt", d.id AS "departmentId", d.code AS "departmentCode",
+             d.name AS "departmentName"
+      FROM "Employee" e
+      INNER JOIN "Department" d
+        ON d.id = e."departmentId" AND d."organizationId" = e."organizationId"
+      WHERE ${Prisma.join(conditions, " AND ")}
+      ORDER BY ${sortColumn} ${sortDirection}, e.id ${sortDirection}
+      LIMIT ${limit + 1}
+    `);
+
+    return rows.map(({ departmentId, departmentCode, departmentName, ...row }) => ({
+      ...row,
+      department: { id: departmentId, code: departmentCode, name: departmentName },
+    }));
+  }
+
   async list(
     principal: RequestPrincipal,
     dto: ListEmployeesDto,
@@ -376,27 +479,26 @@ export class EmployeesService {
       ...(dto.countryCode ? { countryCode: dto.countryCode.toUpperCase() } : {}),
       ...(dto.status ? { status: dto.status as EmployeeStatus } : {}),
       ...(dto.employmentType ? { employmentType: dto.employmentType as EmploymentType } : {}),
-      ...(search
-        ? {
-            OR: [
-              { firstName: { contains: search, mode: "insensitive" } },
-              { lastName: { contains: search, mode: "insensitive" } },
-              { workEmail: { contains: search, mode: "insensitive" } },
-              { employeeNumber: { contains: search, mode: "insensitive" } },
-              { jobTitle: { contains: search, mode: "insensitive" } },
-            ],
-          }
-        : {}),
     };
 
     const keyset = this.cursorPredicate(sort, direction, payload);
 
-    const rows = (await this.prisma.employee.findMany({
-      where: keyset ? { AND: [where, keyset] } : where,
-      orderBy: this.orderBy(sort, direction),
-      take: limit + 1,
-      select: employeeSelect,
-    })) as unknown as EmployeeRow[];
+    const rows = search
+      ? await this.searchRows(
+          membership.organizationId,
+          dto,
+          sort,
+          direction,
+          payload,
+          limit,
+          search,
+        )
+      : ((await this.prisma.employee.findMany({
+          where: keyset ? { AND: [where, keyset] } : where,
+          orderBy: this.orderBy(sort, direction),
+          take: limit + 1,
+          select: employeeSelect,
+        })) as unknown as EmployeeRow[]);
 
     const items = rows.map((row) => this.toListItem(row));
 
@@ -436,20 +538,20 @@ export class EmployeesService {
   async createEmployee(
     principal: RequestPrincipal,
     dto: CreateEmployeeDto,
+    idempotencyKey?: string,
   ): Promise<EmployeeDetail> {
     const membership = await this.requireActiveMembership(principal);
 
     this.assertCanManageWorkforce(membership.role);
 
+    if (!isValidIdempotencyKey(idempotencyKey)) {
+      this.throwIdempotencyKeyRequired();
+    }
+
     const organizationId = membership.organizationId;
     const startedAt = this.executionTrace.now();
 
     this.executionTrace.debug({ event: "employee.create.start", organizationId });
-
-    const department = await this.departments.findTenantDepartmentOrThrow(
-      organizationId,
-      dto.departmentId,
-    );
 
     // Authoritative normalization boundary: canonicalize here (not only in
     // DTO transforms) so internal callers store the same form and uniqueness
@@ -463,26 +565,22 @@ export class EmployeesService {
     const trimmedLevel = dto.level?.trim();
     const level = trimmedLevel ? trimmedLevel : undefined;
     const countryCode = dto.countryCode.trim().toUpperCase();
-
-    const duplicateNumber = await this.prisma.employee.findFirst({
-      where: { organizationId, employeeNumber },
-      select: { id: true },
-    });
-
-    if (duplicateNumber) {
-      this.throwUniqueConflict("employeeNumber");
-    }
-
-    if (workEmail) {
-      const duplicateEmail = await this.prisma.employee.findFirst({
-        where: { organizationId, workEmail },
-        select: { id: true },
-      });
-
-      if (duplicateEmail) {
-        this.throwUniqueConflict("workEmail");
-      }
-    }
+    const requestHash = createHash("sha256")
+      .update(
+        JSON.stringify({
+          departmentId: dto.departmentId.trim(),
+          employeeNumber,
+          firstName,
+          lastName,
+          workEmail: workEmail ?? null,
+          jobTitle,
+          level: level ?? null,
+          countryCode,
+          employmentType: dto.employmentType,
+          hireDate: dto.hireDate,
+        }),
+      )
+      .digest("hex");
 
     try {
       // Strict UTC date-only boundary: DTO @IsDateString alone also accepts
@@ -495,23 +593,77 @@ export class EmployeesService {
         );
       }
 
-      const row = (await this.prisma.employee.create({
-        data: {
-          organizationId,
-          departmentId: department.id,
-          employeeNumber,
-          firstName,
-          lastName,
-          workEmail: workEmail ?? null,
-          jobTitle,
-          level: level ?? null,
-          countryCode,
-          employmentType: dto.employmentType,
-          status: "ACTIVE",
-          hireDate: new Date(`${dto.hireDate}T00:00:00.000Z`),
-        },
-        select: employeeSelect,
-      })) as unknown as EmployeeRow;
+      const idempotencyInput = {
+        organizationId,
+        operation: "employee.create",
+        idempotencyKey,
+      };
+      const result = await this.prisma.$transaction(async (transaction) => {
+        const existing = await this.idempotency.find(transaction, idempotencyInput);
+
+        if (existing) {
+          if (existing.requestHash !== requestHash) this.throwIdempotencyConflict();
+          if (!existing.resourceId || !existing.responsePayload) {
+            throw new AuthException(
+              EMPLOYEE_ERROR_CODES.IDEMPOTENCY_KEY_CONFLICT,
+              "The previous employee creation did not complete.",
+              HttpStatus.CONFLICT,
+            );
+          }
+
+          return existing.responsePayload as unknown as EmployeeDetail;
+        }
+
+        const reserved = await this.idempotency.reserve(transaction, {
+          ...idempotencyInput,
+          requestHash,
+        });
+        const department = await transaction.department.findFirst({
+          where: { id: dto.departmentId.trim(), organizationId },
+          select: { id: true },
+        });
+
+        if (!department) {
+          throw new AuthException(
+            DEPARTMENT_ERROR_CODES.DEPARTMENT_NOT_FOUND,
+            "Department was not found.",
+            HttpStatus.NOT_FOUND,
+          );
+        }
+
+        const created = await transaction.employee.create({
+          data: {
+            organizationId,
+            departmentId: department.id,
+            employeeNumber,
+            firstName,
+            lastName,
+            workEmail: workEmail ?? null,
+            jobTitle,
+            level: level ?? null,
+            countryCode,
+            employmentType: dto.employmentType,
+            status: "ACTIVE",
+            hireDate: new Date(`${dto.hireDate}T00:00:00.000Z`),
+          },
+          select: employeeSelect,
+        });
+
+        await this.idempotency.complete(
+          transaction,
+          reserved.id,
+          created.id,
+          this.toDetail(created as unknown as EmployeeRow),
+        );
+
+        return created;
+      });
+
+      if (!((result as EmployeeRow).createdAt instanceof Date)) {
+        return result as EmployeeDetail;
+      }
+
+      const row = result as EmployeeRow;
 
       const created: EmployeeDetail = {
         ...this.toListItem(row),
@@ -529,6 +681,25 @@ export class EmployeesService {
 
       return created;
     } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002" &&
+        Array.isArray(error.meta?.target) &&
+        (error.meta.target as unknown[]).includes("idempotencyKey")
+      ) {
+        const replay = await this.idempotency.findCommitted({
+          organizationId,
+          operation: "employee.create",
+          idempotencyKey,
+        });
+
+        if (!replay || replay.requestHash !== requestHash || !replay.responsePayload) {
+          this.throwIdempotencyConflict();
+        }
+
+        return replay.responsePayload as unknown as EmployeeDetail;
+      }
+
       if (this.isUniqueViolationOn(error, "employeeNumber")) {
         this.throwUniqueConflict("employeeNumber");
       }
@@ -539,5 +710,312 @@ export class EmployeesService {
 
       throw error;
     }
+  }
+
+  private throwEmployeeNotFound(): never {
+    throw new AuthException(
+      EMPLOYEE_ERROR_CODES.EMPLOYEE_NOT_FOUND,
+      "Employee was not found.",
+      HttpStatus.NOT_FOUND,
+    );
+  }
+
+  private throwCompensationConflict(): never {
+    throw new AuthException(
+      EMPLOYEE_ERROR_CODES.EMPLOYEE_HAS_COMPENSATION_HISTORY,
+      "Employee cannot be deleted because compensation history exists.",
+      HttpStatus.CONFLICT,
+    );
+  }
+
+  private toDetail(row: EmployeeRow): EmployeeDetail {
+    return {
+      ...this.toListItem(row),
+      terminationDate: row.terminationDate ? toDateOnly(row.terminationDate) : null,
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
+    };
+  }
+
+  async updateEmployee(
+    principal: RequestPrincipal,
+    employeeId: string,
+    dto: UpdateEmployeeDto,
+  ): Promise<EmployeeDetail> {
+    const membership = await this.requireActiveMembership(principal);
+
+    this.assertCanManageWorkforce(membership.role);
+
+    const organizationId = membership.organizationId;
+    const startedAt = this.executionTrace.now();
+
+    this.executionTrace.debug({ event: "employee.update.start", organizationId, employeeId });
+
+    const existing = (await this.prisma.employee.findFirst({
+      where: { id: employeeId, organizationId },
+      select: {
+        id: true,
+        employeeNumber: true,
+        workEmail: true,
+        departmentId: true,
+        hireDate: true,
+        terminationDate: true,
+      },
+    })) as unknown as {
+      id: string;
+      employeeNumber: string;
+      workEmail: string | null;
+      departmentId: string;
+      hireDate: Date;
+      terminationDate: Date | null;
+    } | null;
+
+    if (!existing) {
+      this.throwEmployeeNotFound();
+    }
+
+    const data: Prisma.EmployeeUpdateInput = {};
+
+    if (dto.employeeNumber !== undefined) {
+      const employeeNumber = dto.employeeNumber.trim();
+
+      if (employeeNumber !== existing.employeeNumber) {
+        const duplicate = await this.prisma.employee.findFirst({
+          where: { organizationId, employeeNumber, id: { not: existing.id } },
+          select: { id: true },
+        });
+
+        if (duplicate) {
+          this.throwUniqueConflict("employeeNumber");
+        }
+
+        data.employeeNumber = employeeNumber;
+      }
+    }
+
+    if (dto.firstName !== undefined) {
+      data.firstName = dto.firstName.trim();
+    }
+
+    if (dto.lastName !== undefined) {
+      data.lastName = dto.lastName.trim();
+    }
+
+    if (dto.workEmail !== undefined) {
+      if (dto.workEmail === null) {
+        data.workEmail = null;
+      } else {
+        const normalized = normalizeEmail(dto.workEmail);
+
+        if (normalized.length === 0) {
+          data.workEmail = null;
+        } else {
+          if (normalized !== existing.workEmail) {
+            const duplicate = await this.prisma.employee.findFirst({
+              where: { organizationId, workEmail: normalized, id: { not: existing.id } },
+              select: { id: true },
+            });
+
+            if (duplicate) {
+              this.throwUniqueConflict("workEmail");
+            }
+          }
+
+          data.workEmail = normalized;
+        }
+      }
+    }
+
+    if (dto.departmentId !== undefined) {
+      const department = await this.departments.findTenantDepartmentOrThrow(
+        organizationId,
+        dto.departmentId.trim(),
+      );
+
+      data.department = { connect: { id: department.id } };
+    }
+
+    if (dto.jobTitle !== undefined) {
+      data.jobTitle = dto.jobTitle.trim();
+    }
+
+    if (dto.level !== undefined) {
+      if (dto.level === null) {
+        data.level = null;
+      } else {
+        const trimmed = dto.level.trim();
+
+        data.level = trimmed.length > 0 ? trimmed : null;
+      }
+    }
+
+    if (dto.countryCode !== undefined) {
+      data.countryCode = dto.countryCode.trim().toUpperCase();
+    }
+
+    if (dto.employmentType !== undefined) {
+      data.employmentType = dto.employmentType;
+    }
+
+    if (dto.status !== undefined) {
+      data.status = dto.status;
+    }
+
+    // Strict UTC date-only boundary (same rule as onboarding): the DTO
+    // accepts ISO strings, but datetimes would shift the calendar day.
+    let effectiveHire = toDateOnly(existing.hireDate);
+    let effectiveTermination = existing.terminationDate
+      ? toDateOnly(existing.terminationDate)
+      : null;
+
+    if (dto.hireDate !== undefined) {
+      if (!isDateOnlyString(dto.hireDate)) {
+        throw new AuthException(
+          "INVALID_HIRE_DATE",
+          "Hire date must be a calendar date (YYYY-MM-DD).",
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+
+      data.hireDate = new Date(`${dto.hireDate}T00:00:00.000Z`);
+      effectiveHire = dto.hireDate;
+    }
+
+    if (dto.terminationDate !== undefined) {
+      if (dto.terminationDate === null) {
+        data.terminationDate = null;
+        effectiveTermination = null;
+      } else {
+        if (!isDateOnlyString(dto.terminationDate)) {
+          throw new AuthException(
+            EMPLOYEE_ERROR_CODES.INVALID_TERMINATION_DATE,
+            "Termination date must be a calendar date (YYYY-MM-DD).",
+            HttpStatus.BAD_REQUEST,
+          );
+        }
+
+        data.terminationDate = new Date(`${dto.terminationDate}T00:00:00.000Z`);
+        effectiveTermination = dto.terminationDate;
+      }
+    }
+
+    if (effectiveTermination !== null && effectiveTermination < effectiveHire) {
+      throw new AuthException(
+        EMPLOYEE_ERROR_CODES.INVALID_TERMINATION_DATE,
+        "Termination date must be on or after the hire date.",
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    // Explicit nulls are real clears above; an empty PATCH is a no-op read.
+    if (Object.keys(data).length === 0) {
+      return this.detail(principal, existing.id);
+    }
+
+    try {
+      const row = (await this.prisma.employee.update({
+        where: { id: existing.id },
+        data,
+        select: employeeSelect,
+      })) as unknown as EmployeeRow;
+
+      const updated = this.toDetail(row);
+
+      this.executionTrace.debug({
+        event: "employee.update.complete",
+        organizationId,
+        employeeId: updated.id,
+        durationMs: this.executionTrace.durationSince(startedAt),
+      });
+
+      return updated;
+    } catch (error) {
+      if (this.isUniqueViolationOn(error, "employeeNumber")) {
+        this.throwUniqueConflict("employeeNumber");
+      }
+
+      if (this.isUniqueViolationOn(error, "workEmail")) {
+        this.throwUniqueConflict("workEmail");
+      }
+
+      // The composite tenant FK is the final backstop if the application
+      // department lookup is ever bypassed: stay tenant-safe, not leaky.
+      if (isPrismaRelationViolation(error)) {
+        throw new AuthException(
+          DEPARTMENT_ERROR_CODES.DEPARTMENT_NOT_FOUND,
+          "Department was not found.",
+          HttpStatus.NOT_FOUND,
+        );
+      }
+
+      throw error;
+    }
+  }
+
+  async deleteEmployee(
+    principal: RequestPrincipal,
+    employeeId: string,
+  ): Promise<{ deleted: true }> {
+    const membership = await this.requireActiveMembership(principal);
+
+    this.assertCanManageWorkforce(membership.role);
+
+    const organizationId = membership.organizationId;
+    const startedAt = this.executionTrace.now();
+
+    this.executionTrace.debug({ event: "employee.delete.start", organizationId, employeeId });
+
+    const existing = await this.prisma.employee.findFirst({
+      where: { id: employeeId, organizationId },
+      select: { id: true },
+    });
+
+    if (!existing) {
+      this.throwEmployeeNotFound();
+    }
+
+    // Compensation is append-only audit evidence: a protected employee can
+    // never be hard-deleted. Check inside the same transaction as the delete
+    // so compensation created between precheck and delete still blocks.
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        const current = await tx.employeeCompensation.findUnique({
+          where: { employeeId: existing.id },
+          select: { id: true },
+        });
+
+        if (current) {
+          this.throwCompensationConflict();
+        }
+
+        const history = await tx.compensationHistory.findFirst({
+          where: { employeeId: existing.id },
+          select: { id: true },
+        });
+
+        if (history) {
+          this.throwCompensationConflict();
+        }
+
+        await tx.employee.delete({ where: { id: existing.id } });
+      });
+    } catch (error) {
+      // The FK restriction closes the insert-after-precheck race. Preserve the
+      // same domain response as the normal precheck without exposing storage details.
+      if (isPrismaRelationViolation(error)) {
+        this.throwCompensationConflict();
+      }
+
+      throw error;
+    }
+
+    this.executionTrace.debug({
+      event: "employee.delete.complete",
+      organizationId,
+      employeeId: existing.id,
+      durationMs: this.executionTrace.durationSince(startedAt),
+    });
+
+    return { deleted: true };
   }
 }

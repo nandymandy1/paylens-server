@@ -14,10 +14,12 @@ import { validateEnvironment } from "@/config/env.validation.js";
 import { buildLoggerModuleOptions } from "@/config/logger.config.js";
 import { DatabaseModule } from "@/database/database.module.js";
 import { HealthModule } from "@/modules/health/health.module.js";
+import { IdempotencyModule } from "@/common/idempotency/idempotency.module.js";
 import { AuthModule } from "@/modules/auth/auth.module.js";
 import { EmailModule } from "@/modules/email/email.module.js";
 import { DepartmentsModule } from "@/modules/departments/departments.module.js";
 import { EmployeesModule } from "@/modules/employees/employees.module.js";
+import { CompensationModule } from "@/modules/compensation/compensation.module.js";
 import { OrganizationsModule } from "@/modules/organizations/organizations.module.js";
 import { QueueModule } from "@/queue/queue.module.js";
 import { RedisModule } from "@/redis/redis.module.js";
@@ -47,6 +49,7 @@ import { RedisModule } from "@/redis/redis.module.js";
     }),
     ObservabilityModule,
     DatabaseModule,
+    IdempotencyModule,
     RedisModule,
     QueueModule,
     EmailModule,
@@ -54,6 +57,7 @@ import { RedisModule } from "@/redis/redis.module.js";
     OrganizationsModule,
     DepartmentsModule,
     EmployeesModule,
+    CompensationModule,
     HealthModule,
   ],
   providers: [

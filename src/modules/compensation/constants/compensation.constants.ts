@@ -1,0 +1,24 @@
+import type { MembershipRoleName } from "@/modules/auth/constants/auth.constants.js";
+
+export const COMPENSATION_READ_ROLES: readonly MembershipRoleName[] = [
+  "TENANT_OWNER",
+  "HR_ADMIN",
+  "HR_MANAGER",
+  "VIEWER_AUDITOR",
+];
+
+export const COMPENSATION_WRITE_ROLES: readonly MembershipRoleName[] = [
+  "TENANT_OWNER",
+  "HR_ADMIN",
+  "HR_MANAGER",
+];
+
+export const COMPENSATION_ERROR_CODES = {
+  COMPENSATION_VERSION_CONFLICT: "COMPENSATION_VERSION_CONFLICT",
+  EMPLOYEE_NOT_FOUND: "EMPLOYEE_NOT_FOUND",
+  IDEMPOTENCY_KEY_CONFLICT: "IDEMPOTENCY_KEY_CONFLICT",
+  IDEMPOTENCY_KEY_REQUIRED: "IDEMPOTENCY_KEY_REQUIRED",
+  INVALID_COMPENSATION_REASON: "INVALID_COMPENSATION_REASON",
+} as const;
+
+export const COMPENSATION_CURRENCIES = ["INR", "USD", "GBP", "EUR", "SGD"] as const;

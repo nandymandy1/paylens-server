@@ -113,9 +113,30 @@ model Organization {
   memberships OrganizationMembership[]
   invitations OrganizationInvitation[]
   departments Department[]
+  mutationIdempotencies MutationIdempotency[]
   employees   Employee[]
 
   @@index([status])
+}
+
+/// Durable replay boundary for externally retried, tenant-scoped mutations.
+/// A completed record always points at the resource created or changed inside
+/// the same transaction; it is deliberately not a general workflow engine.
+model MutationIdempotency {
+  id             String   @id @default(cuid())
+  organizationId String
+  operation      String   @db.VarChar(80)
+  idempotencyKey String   @db.VarChar(128)
+  requestHash    String   @db.VarChar(64)
+  resourceId     String?
+  responseStatus Int      @default(200)
+  responsePayload Json?
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, operation, idempotencyKey])
+  @@index([organizationId, operation, createdAt])
 }
 
 model OrganizationMembership {
@@ -260,7 +281,7 @@ model EmployeeCompensation {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
-  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
 
   @@index([annualBaseSalary, id])
 }
@@ -280,7 +301,7 @@ model CompensationHistory {
   changedByUserId          String?
   createdAt                DateTime                 @default(now())
 
-  employee      Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee      Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   changedByUser User?    @relation("CompensationHistoryChangedBy", fields: [changedByUserId], references: [id], onDelete: SetNull)
 
   @@unique([employeeId, version])

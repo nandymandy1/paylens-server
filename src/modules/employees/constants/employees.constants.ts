@@ -15,10 +15,15 @@ export const EMPLOYEE_WRITE_ROLES: readonly MembershipRoleName[] = [
   "HR_MANAGER",
 ];
 
-/** Stable employee-onboarding error codes (AuthException body `code`). */
+/** Stable employee-domain error codes (AuthException body `code`). */
 export const EMPLOYEE_ERROR_CODES = {
+  EMPLOYEE_NOT_FOUND: "EMPLOYEE_NOT_FOUND",
   EMPLOYEE_NUMBER_ALREADY_EXISTS: "EMPLOYEE_NUMBER_ALREADY_EXISTS",
   EMPLOYEE_EMAIL_ALREADY_EXISTS: "EMPLOYEE_EMAIL_ALREADY_EXISTS",
+  EMPLOYEE_HAS_COMPENSATION_HISTORY: "EMPLOYEE_HAS_COMPENSATION_HISTORY",
+  INVALID_TERMINATION_DATE: "INVALID_TERMINATION_DATE",
+  IDEMPOTENCY_KEY_REQUIRED: "IDEMPOTENCY_KEY_REQUIRED",
+  IDEMPOTENCY_KEY_CONFLICT: "IDEMPOTENCY_KEY_CONFLICT",
 } as const;
 
 export const EMPLOYEE_SORTS = ["lastName", "hireDate", "employeeNumber"] as const;

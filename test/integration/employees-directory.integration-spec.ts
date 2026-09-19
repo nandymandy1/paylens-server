@@ -62,6 +62,18 @@ describe("employee directory integration", () => {
       },
     });
 
+  const withHistory = (employeeId: string, version = 1) =>
+    prisma.compensationHistory.create({
+      data: {
+        employeeId,
+        version,
+        newAnnualBaseSalary: "1000000.00",
+        newCurrency: "INR",
+        effectiveFrom: new Date("2024-04-01"),
+        reason: "INITIAL",
+      },
+    });
+
   const seedOrg = async () => {
     const organization = await createOrg();
     const engineering = await createDept(organization.id, unique("ENG"), "Engineering");
@@ -252,6 +264,28 @@ describe("employee directory integration", () => {
     expect(workforce).toMatchObject({ hireDate: expect.any(String) });
   });
 
+  it("searches approved prefixes case-insensitively without crossing tenant boundaries", async () => {
+    const orgA = await seedOrg();
+    const orgB = await seedOrg();
+    const shared = {
+      employeeNumber: "EMP-SEARCH-0001",
+      firstName: "Narendra",
+      lastName: "Smith-Jones",
+      workEmail: "narendra.search@paylens.test",
+    };
+    const employeeA = await createEmployee(orgA.organization.id, orgA.engineering.id, shared);
+    const employeeB = await createEmployee(orgB.organization.id, orgB.engineering.id, shared);
+    const principalA = { ...principalFor(orgA.organization.id), membershipId: orgA.membership.id };
+
+    for (const search of ["nar", "smith-j", "narendra.search", "emp-search", "  NAR  "]) {
+      const page = await service.list(principalA, { limit: 25, search });
+      const ids = page.items.map((item) => item.id);
+
+      expect(ids).toContain(employeeA.id);
+      expect(ids).not.toContain(employeeB.id);
+    }
+  });
+
   it("sorts by hire date with tie-breaker ordering", async () => {
     const org = await seedOrg();
     const early = await createEmployee(org.organization.id, org.engineering.id, {
@@ -309,5 +343,131 @@ describe("employee directory integration", () => {
     for (const department of other) {
       expect(options.map((item) => item.id)).not.toContain(department.id);
     }
+  });
+
+  it("persists partial updates inside the active organization", async () => {
+    const org = await seedOrg();
+    const employee = await createEmployee(org.organization.id, org.engineering.id);
+    const principal = { ...principalFor(org.organization.id), membershipId: org.membership.id };
+
+    const updated = await service.updateEmployee(principal, employee.id, {
+      firstName: "Asha",
+      departmentId: org.finance.id,
+      level: "L5",
+      terminationDate: null,
+    });
+
+    expect(updated.firstName).toBe("Asha");
+    expect(updated.department.id).toBe(org.finance.id);
+    expect(updated.level).toBe("L5");
+
+    const stored = await prisma.employee.findUniqueOrThrow({ where: { id: employee.id } });
+
+    expect(stored.firstName).toBe("Asha");
+    expect(stored.departmentId).toBe(org.finance.id);
+
+    // Omitted fields are untouched; no compensation row is manufactured.
+    expect(stored.employeeNumber).toBe(employee.employeeNumber);
+    expect(
+      await prisma.employeeCompensation.findUnique({ where: { employeeId: employee.id } }),
+    ).toBeNull();
+  });
+
+  it("rejects cross-tenant update, delete, and department assignment safely", async () => {
+    const orgA = await seedOrg();
+    const orgB = await seedOrg();
+    const employeeB = await createEmployee(orgB.organization.id, orgB.engineering.id);
+    const principalA = { ...principalFor(orgA.organization.id), membershipId: orgA.membership.id };
+
+    await expect(
+      service.updateEmployee(principalA, employeeB.id, { firstName: "X" }),
+    ).rejects.toMatchObject({
+      code: "EMPLOYEE_NOT_FOUND",
+      status: 404,
+    });
+
+    await expect(service.deleteEmployee(principalA, employeeB.id)).rejects.toMatchObject({
+      code: "EMPLOYEE_NOT_FOUND",
+      status: 404,
+    });
+
+    const employeeA = await createEmployee(orgA.organization.id, orgA.engineering.id);
+
+    await expect(
+      service.updateEmployee(principalA, employeeA.id, { departmentId: orgB.engineering.id }),
+    ).rejects.toMatchObject({ code: "DEPARTMENT_NOT_FOUND" });
+
+    expect(await prisma.employee.findUnique({ where: { id: employeeB.id } })).not.toBeNull();
+  });
+
+  it("maps duplicate numbers to stable conflicts", async () => {
+    const org = await seedOrg();
+    const first = await createEmployee(org.organization.id, org.engineering.id);
+    const second = await createEmployee(org.organization.id, org.engineering.id);
+    const principal = { ...principalFor(org.organization.id), membershipId: org.membership.id };
+
+    await expect(
+      service.updateEmployee(principal, second.id, { employeeNumber: first.employeeNumber }),
+    ).rejects.toMatchObject({ code: "EMPLOYEE_NUMBER_ALREADY_EXISTS", status: 409 });
+  });
+
+  it("deletes safe employees but protects compensation and history", async () => {
+    const org = await seedOrg();
+    const principal = { ...principalFor(org.organization.id), membershipId: org.membership.id };
+
+    const safe = await createEmployee(org.organization.id, org.engineering.id);
+    const result = await service.deleteEmployee(principal, safe.id);
+
+    expect(result).toEqual({ deleted: true });
+    expect(await prisma.employee.findUnique({ where: { id: safe.id } })).toBeNull();
+
+    const protectedCurrent = await createEmployee(org.organization.id, org.engineering.id);
+
+    await withCompensation(protectedCurrent.id, "2000000.00");
+
+    await expect(service.deleteEmployee(principal, protectedCurrent.id)).rejects.toMatchObject({
+      code: "EMPLOYEE_HAS_COMPENSATION_HISTORY",
+      status: 409,
+    });
+    expect(await prisma.employee.findUnique({ where: { id: protectedCurrent.id } })).not.toBeNull();
+    expect(
+      await prisma.employeeCompensation.findUnique({ where: { employeeId: protectedCurrent.id } }),
+    ).not.toBeNull();
+
+    const protectedHistory = await createEmployee(org.organization.id, org.engineering.id);
+
+    await withHistory(protectedHistory.id);
+
+    await expect(service.deleteEmployee(principal, protectedHistory.id)).rejects.toMatchObject({
+      code: "EMPLOYEE_HAS_COMPENSATION_HISTORY",
+      status: 409,
+    });
+    expect(await prisma.employee.findUnique({ where: { id: protectedHistory.id } })).not.toBeNull();
+    expect(
+      await prisma.compensationHistory.findFirst({ where: { employeeId: protectedHistory.id } }),
+    ).not.toBeNull();
+  });
+
+  it("enforces compensation delete protection directly in PostgreSQL", async () => {
+    const org = await seedOrg();
+    const protectedEmployee = await createEmployee(org.organization.id, org.engineering.id);
+
+    await withCompensation(protectedEmployee.id, "2000000.00");
+    await withHistory(protectedEmployee.id);
+
+    await expect(
+      prisma.employee.delete({ where: { id: protectedEmployee.id } }),
+    ).rejects.toMatchObject({
+      code: "P2003",
+    });
+    expect(
+      await prisma.employee.findUnique({ where: { id: protectedEmployee.id } }),
+    ).not.toBeNull();
+    expect(
+      await prisma.employeeCompensation.findUnique({ where: { employeeId: protectedEmployee.id } }),
+    ).not.toBeNull();
+    expect(
+      await prisma.compensationHistory.findFirst({ where: { employeeId: protectedEmployee.id } }),
+    ).not.toBeNull();
   });
 });

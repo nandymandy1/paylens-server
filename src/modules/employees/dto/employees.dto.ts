@@ -11,6 +11,7 @@ import {
   Matches,
   MaxLength,
   MinLength,
+  ValidateIf,
 } from "class-validator";
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import { EmployeeStatus, EmploymentType } from "@prisma/client";
@@ -153,4 +154,93 @@ export class CreateEmployeeDto {
   @IsDateString()
   @Matches(/^\d{4}-\d{2}-\d{2}$/)
   hireDate!: string;
+}
+
+// PATCH semantics: `undefined` (omitted) skips the field. Explicit `null`
+// fails validation for non-nullable fields, except `workEmail`, `level`,
+// and `terminationDate`, where `null` clears the value.
+export class UpdateEmployeeDto {
+  @ApiPropertyOptional({ description: "Tenant-unique employee number" })
+  @ValidateIf((_, value) => value !== undefined)
+  @IsString()
+  @Transform(trim)
+  @MinLength(1)
+  @MaxLength(64)
+  employeeNumber?: string;
+
+  @ApiPropertyOptional({ example: "Olivia" })
+  @ValidateIf((_, value) => value !== undefined)
+  @IsString()
+  @Transform(trim)
+  @MinLength(1)
+  @MaxLength(100)
+  firstName?: string;
+
+  @ApiPropertyOptional({ example: "Carter" })
+  @ValidateIf((_, value) => value !== undefined)
+  @IsString()
+  @Transform(trim)
+  @MinLength(1)
+  @MaxLength(100)
+  lastName?: string;
+
+  @ApiPropertyOptional({ description: "Tenant-unique when present, stored lowercase; null clears" })
+  @ValidateIf((_, value) => value !== undefined && value !== null)
+  @IsEmail()
+  @MaxLength(254)
+  @Transform(lowerEmail)
+  workEmail?: string | null;
+
+  @ApiPropertyOptional({ description: "Department id within the active organization" })
+  @ValidateIf((_, value) => value !== undefined)
+  @IsString()
+  @Transform(trim)
+  @MinLength(1)
+  @MaxLength(64)
+  departmentId?: string;
+
+  @ApiPropertyOptional({ example: "Senior Software Engineer" })
+  @ValidateIf((_, value) => value !== undefined)
+  @IsString()
+  @Transform(trim)
+  @MinLength(1)
+  @MaxLength(120)
+  jobTitle?: string;
+
+  @ApiPropertyOptional({ example: "L4", description: "Null clears" })
+  @ValidateIf((_, value) => value !== undefined && value !== null)
+  @IsString()
+  @Transform(trimOrUndefined)
+  @MaxLength(32)
+  level?: string | null;
+
+  @ApiPropertyOptional({ description: "ISO 3166-1 alpha-2 country code", example: "US" })
+  @ValidateIf((_, value) => value !== undefined)
+  @IsString()
+  @Length(2, 2)
+  @Matches(/^[A-Za-z]{2}$/)
+  @Transform(trimUppercaseTransform)
+  countryCode?: string;
+
+  @ApiPropertyOptional({ enum: EmploymentType })
+  @ValidateIf((_, value) => value !== undefined)
+  @IsEnum(EmploymentType)
+  employmentType?: EmploymentType;
+
+  @ApiPropertyOptional({ enum: EmployeeStatus })
+  @ValidateIf((_, value) => value !== undefined)
+  @IsEnum(EmployeeStatus)
+  status?: EmployeeStatus;
+
+  @ApiPropertyOptional({ description: "Hire date (ISO date)", example: "2026-09-18" })
+  @ValidateIf((_, value) => value !== undefined)
+  @IsDateString()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  hireDate?: string;
+
+  @ApiPropertyOptional({ description: "Termination date (ISO date); null clears" })
+  @ValidateIf((_, value) => value !== undefined && value !== null)
+  @IsDateString()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  terminationDate?: string | null;
 }
