@@ -79,8 +79,8 @@ export class GoogleService {
 
     await this.sessions.saveOAuthState(state, {
       nonce,
-      redirectTo: getSafeRedirectPath(options.redirectTo),
       invitationId,
+      redirectTo: getSafeRedirectPath(options.redirectTo),
       createdAt: new Date().toISOString(),
     });
 
@@ -179,9 +179,9 @@ export class GoogleService {
 
     const redirectTo =
       memberships.length === 0 && !stored.invitationId
-        ? "/onboarding/organization"
+        ? "/auth/onboarding/organization"
         : memberships.length > 1 && !stored.invitationId
-          ? "/select-organization"
+          ? "/auth/select-organization"
           : stored.redirectTo;
 
     return { session, redirectTo };

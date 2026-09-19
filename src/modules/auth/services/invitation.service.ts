@@ -104,7 +104,7 @@ export class InvitationService {
       },
     });
 
-    const link = `${this.config.getOrThrow<string>("app.frontendUrl")}/invite/accept?token=${rawToken}`;
+    const link = `${this.config.getOrThrow<string>("app.frontendUrl")}/auth/invite/accept?token=${rawToken}`;
 
     await this.email.sendInvitationEmail(normalized, membership.organization.name, role, link);
     await this.audit.record("INVITATION_CREATED", {

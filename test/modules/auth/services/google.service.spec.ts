@@ -542,7 +542,7 @@ describe("GoogleService", () => {
 
     expect(harness.users).toHaveLength(1);
     expect(result.session.sessionId).toBe("session-google");
-    expect(result.redirectTo).toBe("/onboarding/organization");
+    expect(result.redirectTo).toBe("/auth/onboarding/organization");
   });
 
   it("links a verified matching email to an existing credentials account", async () => {

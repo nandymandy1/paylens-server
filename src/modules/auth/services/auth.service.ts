@@ -91,11 +91,11 @@ export class AuthService {
   }
 
   private verificationLink(rawToken: string): string {
-    return `${this.config.getOrThrow<string>("app.frontendUrl")}/verify-email?token=${rawToken}`;
+    return `${this.config.getOrThrow<string>("app.frontendUrl")}/auth/verify-email?token=${rawToken}`;
   }
 
   private resetLink(rawToken: string): string {
-    return `${this.config.getOrThrow<string>("app.frontendUrl")}/reset-password?token=${rawToken}`;
+    return `${this.config.getOrThrow<string>("app.frontendUrl")}/auth/reset-password?token=${rawToken}`;
   }
 
   private async uniqueOrgSlug(baseName: string): Promise<string> {
