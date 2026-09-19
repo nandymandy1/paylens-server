@@ -28,10 +28,15 @@ ENV PORT=4000
 
 COPY --from=prod-deps --chown=node:node /app/node_modules ./node_modules
 COPY --from=builder --chown=node:node /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder --chown=node:node /app/node_modules/prisma ./node_modules/prisma
+COPY --from=builder --chown=node:node /app/node_modules/.bin/prisma ./node_modules/.bin/prisma
 COPY --from=builder --chown=node:node /app/dist ./dist
 COPY --from=builder --chown=node:node /app/package.json ./package.json
+COPY --from=builder --chown=node:node /app/prisma ./prisma
+COPY --chown=node:node --chmod=755 docker-entrypoint.sh ./docker-entrypoint.sh
 
 USER node
 EXPOSE 4000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || 4000) + '/health').then((response) => { if (!response.ok) process.exit(1); }).catch(() => process.exit(1))"
+ENTRYPOINT ["./docker-entrypoint.sh"]
 CMD ["node", "--experimental-loader=@opentelemetry/instrumentation/hook.mjs", "dist/main.js"]
