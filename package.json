@@ -25,6 +25,7 @@
     "seed": "tsx prisma/seed.ts",
     "seed:verify": "tsx prisma/seed.ts verify",
     "seed:rollback": "tsx prisma/seed.ts rollback",
+    "seed:reviewer-demo": "tsx prisma/seed-reviewer-demo.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:cov": "vitest run --coverage",
