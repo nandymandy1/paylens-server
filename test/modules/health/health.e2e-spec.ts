@@ -62,6 +62,10 @@ describe("Health endpoints (e2e)", () => {
     await request(app.getHttpServer()).get("/api/docs").expect(200);
   });
 
+  it("redirects the API root to Swagger instead of returning Cannot GET /", async () => {
+    await request(app.getHttpServer()).get("/").expect(302).expect("Location", "/api/docs");
+  });
+
   it("never throttles health/readiness probes", async () => {
     for (let attempt = 0; attempt < 10; attempt += 1) {
       await request(app.getHttpServer()).get("/health").expect(200);

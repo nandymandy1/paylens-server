@@ -34,6 +34,9 @@ export async function createApplication(): Promise<INestApplication> {
   SwaggerModule.setup("api/docs", app, document, {
     jsonDocumentUrl: "api/docs-json",
   });
+  // A deployed API should have a useful landing route rather than Express's
+  // default "Cannot GET /" response. API and probe routes remain unchanged.
+  app.getHttpAdapter().get("/", (_request, response) => response.redirect(302, "/api/docs"));
 
   return app;
 }
