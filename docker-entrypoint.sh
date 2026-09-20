@@ -7,7 +7,7 @@ echo "Applying Prisma migrations..."
 # Opt-in reviewer demo bootstrap (narrow create-once seed; never the SEED-R1 dataset).
 if [ "${SEED_REVIEWER_DEMO:-false}" = "true" ]; then
   echo "Provisioning reviewer demo account..."
-  npm run seed:reviewer-demo
+  npm run seed:reviewer-demo:prod
 fi
 
 exec "$@"
