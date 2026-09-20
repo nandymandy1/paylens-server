@@ -80,6 +80,42 @@ enum CompensationChangeReason {
   OTHER
 }
 
+enum EmployeeTransferFormat {
+  CSV
+  XLSX
+}
+
+enum EmployeeExportStatus {
+  QUEUED
+  PROCESSING
+  PAUSING
+  PAUSED
+  CANCELLING
+  CANCELLED
+  FINALIZING
+  COMPLETED
+  FAILED
+  EXPIRED
+}
+
+enum EmployeeImportStatus {
+  AWAITING_UPLOAD
+  QUEUED
+  VALIDATING
+  PAUSING
+  PAUSED
+  READY_FOR_REVIEW
+  APPLY_QUEUED
+  APPLYING
+  CANCELLING
+  CANCELLED
+  CANCELLED_PARTIAL
+  COMPLETED
+  COMPLETED_WITH_ERRORS
+  FAILED
+  EXPIRED
+}
+
 model User {
   id             String     @id @default(cuid())
   email          String     @unique
@@ -98,6 +134,8 @@ model User {
   auditActorEvents  AuthAuditEvent[] @relation("AuditActor")
   auditTargetEvents AuthAuditEvent[] @relation("AuditTarget")
   compensationChanges CompensationHistory[] @relation("CompensationHistoryChangedBy")
+  requestedExports   EmployeeExport[]       @relation("EmployeeExportRequester")
+  requestedImports   EmployeeImport[]       @relation("EmployeeImportRequester")
 
   @@index([status])
 }
@@ -115,6 +153,8 @@ model Organization {
   departments Department[]
   mutationIdempotencies MutationIdempotency[]
   employees   Employee[]
+  employeeExports EmployeeExport[]
+  employeeImports EmployeeImport[]
 
   @@index([status])
 }
@@ -230,6 +270,7 @@ model Department {
   organizationId String
   code           String
   name           String
+  normalizedName String   @default(dbgenerated())
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -237,8 +278,78 @@ model Department {
   employees    Employee[]
 
   @@unique([organizationId, code])
+  @@unique([organizationId, normalizedName])
   @@unique([organizationId, id])
   @@index([organizationId, name, id])
+}
+
+model EmployeeExport {
+  id                      String               @id @default(cuid())
+  organizationId          String
+  requestedByUserId       String
+  format                  EmployeeTransferFormat
+  status                  EmployeeExportStatus @default(QUEUED)
+  totalRows               Int                  @default(0)
+  processedRows           Int                  @default(0)
+  progressPercent         Int                  @default(0)
+  lastProcessedEmployeeId String?
+  nextBatchNumber         Int                  @default(1)
+  finalObjectKey          String?
+  fileName                String?
+  fileSizeBytes           Int?
+  errorCode               String?
+  createdAt               DateTime             @default(now())
+  startedAt               DateTime?
+  completedAt             DateTime?
+  expiresAt               DateTime?
+  updatedAt               DateTime             @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  requestedBy  User         @relation("EmployeeExportRequester", fields: [requestedByUserId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, requestedByUserId, createdAt])
+  @@index([organizationId, status, createdAt])
+}
+
+model EmployeeImport {
+  id                       String               @id @default(cuid())
+  organizationId           String
+  requestedByUserId        String
+  format                   EmployeeTransferFormat
+  status                   EmployeeImportStatus @default(AWAITING_UPLOAD)
+  originalFileName         String
+  sourceObjectKey          String
+  normalizedPrefix         String?
+  validationReportObjectKey String?
+  applyReportObjectKey     String?
+  totalRows                Int                  @default(0)
+  validatedRows            Int                  @default(0)
+  validRows                Int                  @default(0)
+  invalidRows              Int                  @default(0)
+  createRows               Int                  @default(0)
+  updateRows               Int                  @default(0)
+  unchangedRows            Int                  @default(0)
+  processedRows            Int                  @default(0)
+  createdRows              Int                  @default(0)
+  updatedRows              Int                  @default(0)
+  failedRows               Int                  @default(0)
+  lastProcessedRow         Int                  @default(0)
+  nextBatchNumber          Int                  @default(1)
+  createMissingDepartments Boolean              @default(false)
+  previewSummary           Json?
+  createdAt                DateTime             @default(now())
+  uploadedAt               DateTime?
+  validatedAt              DateTime?
+  startedAt                DateTime?
+  completedAt              DateTime?
+  expiresAt                DateTime?
+  updatedAt                DateTime             @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  requestedBy  User         @relation("EmployeeImportRequester", fields: [requestedByUserId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, requestedByUserId, createdAt])
+  @@index([organizationId, status, createdAt])
 }
 
 model Employee {

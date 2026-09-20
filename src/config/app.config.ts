@@ -30,5 +30,10 @@ export default registerAs("app", () => {
     googleClientSecret: runtime.GOOGLE_CLIENT_SECRET,
     googleCallbackUrl: runtime.GOOGLE_CALLBACK_URL,
     otelExporterOtlpEndpoint: runtime.OTEL_EXPORTER_OTLP_ENDPOINT,
+    fileStorageEndpoint: runtime.FILE_STORAGE_ENDPOINT,
+    fileStorageAccessKeyId: runtime.FILE_STORAGE_ACCESS_KEY_ID,
+    fileStorageSecretAccessKey: runtime.FILE_STORAGE_SECRET_ACCESS_KEY,
+    fileStorageBucket: runtime.FILE_STORAGE_BUCKET,
+    fileStorageRegion: runtime.FILE_STORAGE_REGION,
   };
 });

@@ -18,6 +18,11 @@ export type ValidatedEnvironment = {
   GOOGLE_CLIENT_SECRET: string;
   GOOGLE_CALLBACK_URL: string;
   OTEL_EXPORTER_OTLP_ENDPOINT: string;
+  FILE_STORAGE_ENDPOINT: string;
+  FILE_STORAGE_ACCESS_KEY_ID: string;
+  FILE_STORAGE_SECRET_ACCESS_KEY: string;
+  FILE_STORAGE_BUCKET: string;
+  FILE_STORAGE_REGION: string;
 };
 
 const environments = new Set<Environment>(["development", "test", "production"]);
@@ -124,6 +129,35 @@ const validateSmtpUrl = (value: unknown, environment: Environment): string => {
   return requireUrl(smtpUrl, "SMTP_URL", ["smtp:", "smtps:"]);
 };
 
+const validateFileStorage = (raw: Record<string, unknown>, environment: Environment) => {
+  const endpoint = parseOptionalStringEnv(raw.FILE_STORAGE_ENDPOINT as string);
+  const accessKeyId = parseOptionalStringEnv(raw.FILE_STORAGE_ACCESS_KEY_ID as string);
+  const secretAccessKey = parseOptionalStringEnv(raw.FILE_STORAGE_SECRET_ACCESS_KEY as string);
+  const bucket = parseOptionalStringEnv(raw.FILE_STORAGE_BUCKET as string);
+  const region = parseOptionalStringEnv(raw.FILE_STORAGE_REGION as string) ?? "auto";
+  const values = [endpoint, accessKeyId, secretAccessKey, bucket];
+
+  if (values.some(Boolean) && values.some((value) => !value)) {
+    throw new Error(
+      "FILE_STORAGE_ENDPOINT, FILE_STORAGE_ACCESS_KEY_ID, FILE_STORAGE_SECRET_ACCESS_KEY, and FILE_STORAGE_BUCKET must be set together",
+    );
+  }
+
+  if (environment === "production" && values.some((value) => !value)) {
+    throw new Error("FILE_STORAGE_* configuration is required in production");
+  }
+
+  return {
+    endpoint: endpoint
+      ? requireUrl(endpoint, "FILE_STORAGE_ENDPOINT", ["http:", "https:"])
+      : "http://localhost:9000",
+    accessKeyId: accessKeyId ?? "development-file-storage-key",
+    secretAccessKey: secretAccessKey ?? "development-file-storage-secret",
+    bucket: bucket ?? "paylens-development",
+    region,
+  };
+};
+
 /** The one normalized runtime environment contract used by validation and app config. */
 export const loadRuntimeConfig = (raw: Record<string, unknown>): ValidatedEnvironment => {
   const NODE_ENV = validateNodeEnvironment(raw.NODE_ENV);
@@ -152,13 +186,19 @@ export const loadRuntimeConfig = (raw: Record<string, unknown>): ValidatedEnviro
   }
 
   const google = validateGoogleGroup(raw, NODE_ENV);
+  // Validate the long-standing deployment contract before the newly activated
+  // file-storage contract, so diagnostics remain actionable and stable.
+  const FRONTEND_URL = validateFrontendUrl(raw.FRONTEND_URL, NODE_ENV);
+  const DATABASE_URL = requireUrl(raw.DATABASE_URL, "DATABASE_URL", ["postgres:", "postgresql:"]);
+  const REDIS_URL = requireUrl(raw.REDIS_URL, "REDIS_URL", ["redis:", "rediss:"]);
+  const fileStorage = validateFileStorage(raw, NODE_ENV);
 
   return {
     NODE_ENV,
     PORT: parseIntegerInRange(raw.PORT, 4000, "PORT", 1, 65_535),
-    DATABASE_URL: requireUrl(raw.DATABASE_URL, "DATABASE_URL", ["postgres:", "postgresql:"]),
-    REDIS_URL: requireUrl(raw.REDIS_URL, "REDIS_URL", ["redis:", "rediss:"]),
-    FRONTEND_URL: validateFrontendUrl(raw.FRONTEND_URL, NODE_ENV),
+    DATABASE_URL,
+    REDIS_URL,
+    FRONTEND_URL,
     LOG_LEVEL: LOG_LEVEL as ValidatedEnvironment["LOG_LEVEL"],
     AUTH_ACCESS_TOKEN_SECRET: validateAuthSecret(raw.AUTH_ACCESS_TOKEN_SECRET, NODE_ENV),
     AUTH_COOKIE_SAME_SITE,
@@ -169,6 +209,11 @@ export const loadRuntimeConfig = (raw: Record<string, unknown>): ValidatedEnviro
     GOOGLE_CALLBACK_URL: google.callbackUrl,
     OTEL_EXPORTER_OTLP_ENDPOINT:
       parseOptionalStringEnv(raw.OTEL_EXPORTER_OTLP_ENDPOINT as string) ?? "",
+    FILE_STORAGE_ENDPOINT: fileStorage.endpoint,
+    FILE_STORAGE_ACCESS_KEY_ID: fileStorage.accessKeyId,
+    FILE_STORAGE_SECRET_ACCESS_KEY: fileStorage.secretAccessKey,
+    FILE_STORAGE_BUCKET: fileStorage.bucket,
+    FILE_STORAGE_REGION: fileStorage.region,
   };
 };
 

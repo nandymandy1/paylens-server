@@ -7,6 +7,13 @@ const base = {
   AUTH_ACCESS_TOKEN_SECRET: "a-32-character-development-secret!!",
 };
 
+const productionFileStorage = {
+  FILE_STORAGE_ENDPOINT: "https://account-id.r2.cloudflarestorage.com",
+  FILE_STORAGE_ACCESS_KEY_ID: "access-key-id",
+  FILE_STORAGE_SECRET_ACCESS_KEY: "secret-access-key",
+  FILE_STORAGE_BUCKET: "paylens-private",
+};
+
 describe("loadRuntimeConfig", () => {
   it("accepts the minimal development contract", () => {
     const config = loadRuntimeConfig(base);
@@ -31,6 +38,7 @@ describe("loadRuntimeConfig", () => {
       FRONTEND_URL: "https://app.paylens.example/",
       SMTP_URL: "smtp://user:password@smtp.example:587",
       EMAIL_FROM: "PayLens <noreply@paylens.example>",
+      ...productionFileStorage,
     });
 
     expect(config.FRONTEND_URL).toBe("https://app.paylens.example");
@@ -48,6 +56,7 @@ describe("loadRuntimeConfig", () => {
         FRONTEND_URL: "http://app.example",
         SMTP_URL: "smtp://user:password@smtp.example:587",
         EMAIL_FROM: "PayLens <noreply@example.com>",
+        ...productionFileStorage,
       }),
     ).toThrow("FRONTEND_URL");
   });

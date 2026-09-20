@@ -19,10 +19,13 @@ import { AuthModule } from "@/modules/auth/auth.module.js";
 import { EmailModule } from "@/modules/email/email.module.js";
 import { DepartmentsModule } from "@/modules/departments/departments.module.js";
 import { EmployeesModule } from "@/modules/employees/employees.module.js";
+import { EmployeeExportsModule } from "@/modules/employee-exports/employee-exports.module.js";
+import { EmployeeImportsModule } from "@/modules/employee-imports/employee-imports.module.js";
 import { CompensationModule } from "@/modules/compensation/compensation.module.js";
 import { OrganizationsModule } from "@/modules/organizations/organizations.module.js";
 import { QueueModule } from "@/queue/queue.module.js";
 import { RedisModule } from "@/redis/redis.module.js";
+import { FileStorageModule } from "@/storage/file-storage.module.js";
 
 @Module({
   imports: [
@@ -52,11 +55,14 @@ import { RedisModule } from "@/redis/redis.module.js";
     IdempotencyModule,
     RedisModule,
     QueueModule,
+    FileStorageModule,
     EmailModule,
     AuthModule,
     OrganizationsModule,
     DepartmentsModule,
     EmployeesModule,
+    EmployeeExportsModule,
+    EmployeeImportsModule,
     CompensationModule,
     HealthModule,
   ],
