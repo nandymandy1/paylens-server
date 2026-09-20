@@ -267,6 +267,13 @@ export class EmployeeImportsService {
         HttpStatus.CONFLICT,
       );
 
+    if (!createMissingDepartments && (await this.hasUnresolvedDepartments(row)))
+      throw new AuthException(
+        EMPLOYEE_IMPORT_ERROR_CODES.IMPORT_CONFLICT,
+        "Missing departments must be created or resolved before confirming this import.",
+        HttpStatus.CONFLICT,
+      );
+
     const transitioned = await this.prisma.employeeImport.updateMany({
       where: { id: row.id, status: "READY_FOR_REVIEW" },
       data: {
@@ -297,7 +304,10 @@ export class EmployeeImportsService {
     } catch (error) {
       await this.prisma.employeeImport.update({
         where: { id: row.id },
-        data: { status: "READY_FOR_REVIEW", createMissingDepartments: row.createMissingDepartments },
+        data: {
+          status: "READY_FOR_REVIEW",
+          createMissingDepartments: row.createMissingDepartments,
+        },
       });
       throw error;
     }
@@ -308,9 +318,11 @@ export class EmployeeImportsService {
   async pause(principal: RequestPrincipal, id: string) {
     const row = await this.owned(principal, id);
 
-    if (row.status === "VALIDATING" || row.status === "APPLYING")
-      await this.prisma.employeeImport.update({
-        where: { id },
+    // Validation owns no resumable, durable checkpoint. Pause is therefore
+    // deliberately limited to the apply phase.
+    if (row.status === "APPLYING")
+      await this.prisma.employeeImport.updateMany({
+        where: { id, status: "APPLYING" },
         data: { status: "PAUSING" },
       });
 
@@ -322,25 +334,23 @@ export class EmployeeImportsService {
 
     if (row.status !== "PAUSED") return this.summary(row);
 
-    // PAUSED is reached from VALIDATING or APPLYING. Once validation has
-    // completed, staged normalized chunks exist, so resume continues the
-    // apply path from lastProcessedRow (nothing commits before the first
-    // batch boundary, making even a first-batch pause safe to re-apply).
-    const isApplyPhase = row.validatedAt !== null;
-    const jobName = isApplyPhase ? EMPLOYEE_IMPORT_APPLY_JOB : EMPLOYEE_IMPORT_VALIDATE_JOB;
-    const nextStatus = isApplyPhase ? "APPLY_QUEUED" : "QUEUED";
+    const claimed = await this.prisma.employeeImport.updateMany({
+      where: { id, status: "PAUSED" },
+      data: { status: "APPLY_QUEUED" },
+    });
 
-    await this.prisma.employeeImport.update({ where: { id }, data: { status: nextStatus } });
+    if (claimed.count === 0) return this.detail(principal, id);
+
     try {
       await this.queue.add(
-        jobName,
+        EMPLOYEE_IMPORT_APPLY_JOB,
         {
           importId: row.id,
           organizationId: row.organizationId,
           requestedByUserId: row.requestedByUserId,
         },
         {
-          jobId: `${row.id}-${isApplyPhase ? "apply-resume" : "validate-resume"}-${row.nextBatchNumber}`,
+          jobId: `${row.id}-apply-resume-${row.lastProcessedRow}`,
           removeOnComplete: true,
           removeOnFail: 100,
           attempts: 3,
@@ -348,7 +358,10 @@ export class EmployeeImportsService {
         },
       );
     } catch (error) {
-      await this.prisma.employeeImport.update({ where: { id }, data: { status: "PAUSED" } });
+      await this.prisma.employeeImport.updateMany({
+        where: { id, status: "APPLY_QUEUED" },
+        data: { status: "PAUSED" },
+      });
       throw error;
     }
 
@@ -365,16 +378,27 @@ export class EmployeeImportsService {
         row.status,
       )
     ) {
-      await this.cleanupStaging(row);
-      const updated = await this.prisma.employeeImport.update({
-        where: { id },
+      // Claim the terminal transition before deleting anything. A worker may
+      // otherwise have claimed APPLYING after our read but before cleanup.
+      const claimed = await this.prisma.employeeImport.updateMany({
+        where: {
+          id,
+          status: {
+            in: ["AWAITING_UPLOAD", "QUEUED", "PAUSED", "READY_FOR_REVIEW", "APPLY_QUEUED"],
+          },
+        },
         data: { status: "CANCELLED" },
       });
 
-      return this.summary(updated);
+      if (claimed.count > 0) await this.cleanupArtifacts(row);
+
+      return this.detail(principal, id);
     }
 
-    await this.prisma.employeeImport.update({ where: { id }, data: { status: "CANCELLING" } });
+    await this.prisma.employeeImport.updateMany({
+      where: { id, status: { in: ["VALIDATING", "APPLYING", "PAUSING"] } },
+      data: { status: "CANCELLING" },
+    });
 
     return this.detail(principal, id);
   }
@@ -400,8 +424,8 @@ export class EmployeeImportsService {
     return this.storage.createSignedDownloadUrl(key);
   }
 
-  async cleanupStaging(row: { organizationId: string; id: string }) {
-    await this.storage.deletePrefix(`employee-imports/${row.organizationId}/${row.id}/normalized/`);
+  async cleanupArtifacts(row: { organizationId: string; id: string }) {
+    await this.storage.deletePrefix(`employee-imports/${row.organizationId}/${row.id}/`);
   }
 
   summary(row: EmployeeImport): EmployeeImportSummary {
@@ -418,6 +442,7 @@ export class EmployeeImportsService {
       updateRows: row.updateRows,
       unchangedRows: row.unchangedRows,
       processedRows: row.processedRows,
+      progressPercent: row.progressPercent,
       createdRows: row.createdRows,
       updatedRows: row.updatedRows,
       failedRows: row.failedRows,
@@ -428,5 +453,49 @@ export class EmployeeImportsService {
       completedAt: row.completedAt,
       errorCode: null,
     };
+  }
+
+  private async hasUnresolvedDepartments(row: EmployeeImport): Promise<boolean> {
+    const preview = row.previewSummary as {
+      missingDepartments?: unknown;
+      departmentPlan?: unknown;
+    } | null;
+    const sources = Array.isArray(preview?.missingDepartments)
+      ? preview.missingDepartments.filter((value): value is string => typeof value === "string")
+      : [];
+
+    if (!sources.length) return false;
+
+    const plans = new Map<string, string>();
+
+    if (Array.isArray(preview?.departmentPlan)) {
+      for (const entry of preview.departmentPlan) {
+        if (
+          entry &&
+          typeof entry === "object" &&
+          "from" in entry &&
+          "name" in entry &&
+          typeof entry.from === "string" &&
+          typeof entry.name === "string"
+        )
+          plans.set(entry.from.trim().toLocaleLowerCase(), entry.name.trim().toLocaleLowerCase());
+      }
+    }
+
+    const existing = new Set(
+      (
+        await this.prisma.department.findMany({
+          where: { organizationId: row.organizationId },
+          select: { name: true },
+        })
+      ).map((department) => department.name.trim().toLocaleLowerCase()),
+    );
+
+    return sources.some(
+      (source) =>
+        !existing.has(
+          plans.get(source.trim().toLocaleLowerCase()) ?? source.trim().toLocaleLowerCase(),
+        ),
+    );
   }
 }

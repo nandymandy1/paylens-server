@@ -23,6 +23,8 @@ export type ValidatedEnvironment = {
   FILE_STORAGE_SECRET_ACCESS_KEY: string;
   FILE_STORAGE_BUCKET: string;
   FILE_STORAGE_REGION: string;
+  OPENAI_API_KEY: string;
+  OPENAI_MODEL: string;
 };
 
 const environments = new Set<Environment>(["development", "test", "production"]);
@@ -214,6 +216,10 @@ export const loadRuntimeConfig = (raw: Record<string, unknown>): ValidatedEnviro
     FILE_STORAGE_SECRET_ACCESS_KEY: fileStorage.secretAccessKey,
     FILE_STORAGE_BUCKET: fileStorage.bucket,
     FILE_STORAGE_REGION: fileStorage.region,
+    // Optional: header-mapping AI for employee imports. Absent key means
+    // deterministic alias mapping only — validation still rejects unknowns.
+    OPENAI_API_KEY: parseOptionalStringEnv(raw.OPENAI_API_KEY as string) ?? "",
+    OPENAI_MODEL: parseOptionalStringEnv(raw.OPENAI_MODEL as string) ?? "gpt-4o-mini",
   };
 };
 

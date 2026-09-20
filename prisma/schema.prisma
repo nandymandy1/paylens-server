@@ -330,6 +330,7 @@ model EmployeeImport {
   updateRows               Int                  @default(0)
   unchangedRows            Int                  @default(0)
   processedRows            Int                  @default(0)
+  progressPercent          Int                  @default(0)
   createdRows              Int                  @default(0)
   updatedRows              Int                  @default(0)
   failedRows               Int                  @default(0)

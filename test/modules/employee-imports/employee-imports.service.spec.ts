@@ -53,6 +53,7 @@ const createHarness = (rowOverrides: Record<string, unknown> = {}) => {
       findFirst: vi.fn(async () => importRow(rowOverrides)),
       findMany: vi.fn(async () => [importRow(rowOverrides)]),
     },
+    department: { findMany: vi.fn(async () => []) },
   };
   const storage = {
     createSignedUploadUrl: vi.fn(async () => ({
@@ -136,6 +137,36 @@ describe("EmployeeImportsService", () => {
     expect(queue.add).not.toHaveBeenCalled();
   });
 
+  it("rejects confirmation without creation when a planned department remains unresolved", async () => {
+    const { service, queue } = createHarness({
+      previewSummary: {
+        missingDepartments: ["Engg"],
+        departmentPlan: [{ from: "Engg", name: "Engineering", code: "ENG", source: "ai" }],
+      },
+    });
+
+    await expect(
+      service.confirm(principalFor("HR_MANAGER") as never, "imp-1", false),
+    ).rejects.toMatchObject({
+      status: 409,
+    });
+    expect(queue.add).not.toHaveBeenCalled();
+  });
+
+  it("allows confirmation without creation when an AI alias resolves to an existing department", async () => {
+    const { service, prisma, queue } = createHarness({
+      previewSummary: {
+        missingDepartments: ["Engg"],
+        departmentPlan: [{ from: "Engg", name: "Engineering", code: "ENG", source: "ai" }],
+      },
+    });
+
+    prisma.department.findMany.mockResolvedValueOnce([{ name: "Engineering" }] as never);
+
+    await service.confirm(principalFor("HR_MANAGER") as never, "imp-1", false);
+    expect(queue.add).toHaveBeenCalledTimes(1);
+  });
+
   it("confirm is idempotent while apply is already queued", async () => {
     const { service, queue } = createHarness({ status: "APPLY_QUEUED", invalidRows: 0 });
 
@@ -152,11 +183,13 @@ describe("EmployeeImportsService", () => {
 
     expect(queue.add).toHaveBeenCalledTimes(1);
     const options = (queue.add.mock.calls[0] as { jobId?: string }[])[2];
+
     expect(options?.jobId).toBe("imp-1-validate");
   });
 
   it("uploadComplete restores AWAITING_UPLOAD when enqueue fails", async () => {
     const { service, prisma, queue } = createHarness({ status: "AWAITING_UPLOAD" });
+
     queue.add.mockRejectedValueOnce(new Error("redis down"));
 
     await expect(
@@ -165,6 +198,7 @@ describe("EmployeeImportsService", () => {
     const statuses = prisma.employeeImport.update.mock.calls.map(
       (call) => (call[0] as { data: { status: string } }).data.status,
     );
+
     expect(statuses).toEqual(["QUEUED", "AWAITING_UPLOAD"]);
   });
 
@@ -173,6 +207,7 @@ describe("EmployeeImportsService", () => {
       status: "READY_FOR_REVIEW",
       invalidRows: 0,
     });
+
     queue.add.mockRejectedValueOnce(new Error("redis down"));
 
     await expect(

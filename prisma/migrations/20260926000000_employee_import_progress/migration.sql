@@ -1,0 +1,1 @@
+ALTER TABLE "EmployeeImport" ADD COLUMN "progressPercent" INTEGER NOT NULL DEFAULT 0;

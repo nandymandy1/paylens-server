@@ -7,7 +7,8 @@ import { EmployeeImportsProcessor } from "@/modules/employee-imports/employee-im
 // user file "novastack-tech-300-employees.csv" carries it, and validation must
 // still recognize "Employee Number" instead of failing with MISSING_HEADER.
 const BOM_CSV = [
-  "\uFEFF" + "Employee Number,First Name,Last Name,Work Email,Job Title,Department,Country,Employment Type,Employment Status,Level,Start Date,Termination Date",
+  "\uFEFF" +
+    "Employee Number,First Name,Last Name,Work Email,Job Title,Department,Country,Employment Type,Employment Status,Level,Start Date,Termination Date",
   "NST-0001,Ananya,Agarwal,ananya.agarwal.001@novastack.example,Staff Engineer,Engineering,IN,FULL_TIME,ACTIVE,L4,2022-08-07,",
 ].join("\n");
 
@@ -32,6 +33,11 @@ const createHarness = () => {
 
         return args.data;
       }),
+      updateMany: vi.fn(async (args: { data: Record<string, unknown> }) => {
+        updates.push(args.data);
+
+        return { count: 1 };
+      }),
     },
     employee: { findMany: vi.fn(async () => []) },
     department: { findMany: vi.fn(async () => [{ name: "Engineering" }]) },
@@ -40,7 +46,11 @@ const createHarness = () => {
     downloadStream: vi.fn(async () => Readable.from([BOM_CSV])),
     upload: vi.fn(async () => ({ key: "k" })),
   };
-  const processor = new EmployeeImportsProcessor(prisma as never, storage as never);
+  const ai = {
+    isConfigured: false,
+    completeJson: vi.fn(async () => null),
+  };
+  const processor = new EmployeeImportsProcessor(prisma as never, storage as never, ai as never);
 
   return { prisma, storage, processor, updates };
 };
@@ -60,6 +70,7 @@ describe("EmployeeImportsProcessor", () => {
     } as never);
 
     const final = updates.at(-1) as { status: string; invalidRows: number; validRows: number };
+
     expect(final.status).toBe("READY_FOR_REVIEW");
     expect(final.invalidRows).toBe(0);
     expect(final.validRows).toBe(1);

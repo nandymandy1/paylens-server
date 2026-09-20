@@ -15,6 +15,7 @@ import { buildLoggerModuleOptions } from "@/config/logger.config.js";
 import { DatabaseModule } from "@/database/database.module.js";
 import { HealthModule } from "@/modules/health/health.module.js";
 import { IdempotencyModule } from "@/common/idempotency/idempotency.module.js";
+import { AiModule } from "@/modules/ai/ai.module.js";
 import { AuthModule } from "@/modules/auth/auth.module.js";
 import { EmailModule } from "@/modules/email/email.module.js";
 import { DepartmentsModule } from "@/modules/departments/departments.module.js";
@@ -57,6 +58,7 @@ import { FileStorageModule } from "@/storage/file-storage.module.js";
     QueueModule,
     FileStorageModule,
     EmailModule,
+    AiModule,
     AuthModule,
     OrganizationsModule,
     DepartmentsModule,

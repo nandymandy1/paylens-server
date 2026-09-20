@@ -35,5 +35,7 @@ export default registerAs("app", () => {
     fileStorageSecretAccessKey: runtime.FILE_STORAGE_SECRET_ACCESS_KEY,
     fileStorageBucket: runtime.FILE_STORAGE_BUCKET,
     fileStorageRegion: runtime.FILE_STORAGE_REGION,
+    openaiApiKey: runtime.OPENAI_API_KEY,
+    openaiModel: runtime.OPENAI_MODEL,
   };
 });

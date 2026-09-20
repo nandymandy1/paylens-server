@@ -13,6 +13,7 @@ export type EmployeeImportSummary = {
   updateRows: number;
   unchangedRows: number;
   processedRows: number;
+  progressPercent: number;
   createdRows: number;
   updatedRows: number;
   failedRows: number;
