@@ -26,6 +26,7 @@ import { CompensationModule } from "@/modules/compensation/compensation.module.j
 import { OrganizationsModule } from "@/modules/organizations/organizations.module.js";
 import { QueueModule } from "@/queue/queue.module.js";
 import { RedisModule } from "@/redis/redis.module.js";
+import { SqlSandboxModule } from "@/modules/sql-sandbox/sql-sandbox.module.js";
 import { FileStorageModule } from "@/storage/file-storage.module.js";
 
 @Module({
@@ -67,6 +68,7 @@ import { FileStorageModule } from "@/storage/file-storage.module.js";
     EmployeeImportsModule,
     CompensationModule,
     HealthModule,
+    SqlSandboxModule,
   ],
   providers: [
     RequestContextMiddleware,
